@@ -727,6 +727,30 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
                       <X className="w-3 h-3" />
                     </button>
                   )}
+
+                  {/* Exclude tag — deselects locations that have this tag */}
+                  {tags.length > 0 && selectedLocations.size > 0 && (
+                    <Select
+                      value="none"
+                      onValueChange={(tagId) => {
+                        const tag = tags.find(t => t.id === tagId);
+                        if (tag) handleDeselectByTag(tag.id, tag.name);
+                      }}
+                    >
+                      <SelectTrigger
+                        className="h-7 text-xs rounded-full border-red-200 text-red-600 px-2.5 w-auto inline-flex gap-1 [&>svg]:hidden hover:bg-red-50"
+                        data-testid="select-exclude-tag"
+                      >
+                        <span>− Exclude Tag</span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none" disabled>Pick a tag to exclude</SelectItem>
+                        {tags.map(tag => (
+                          <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
 
                 {/* Select all visible */}

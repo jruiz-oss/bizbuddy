@@ -514,6 +514,25 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
     else if (modal === "tag") setShowAddToTagModal(true);
   };
 
+  const handleDeselectByTag = async (tagId: string, tagName: string) => {
+    try {
+      const response = await fetch(`/api/tags/${tagId}/locations`);
+      if (!response.ok) throw new Error();
+      const tagLocs: { id: string }[] = await response.json();
+      const tagLocationIds = new Set(tagLocs.map(l => l.id));
+      const newSelected = new Set(Array.from(selectedLocations).filter(id => !tagLocationIds.has(id)));
+      const deselectedCount = selectedLocations.size - newSelected.size;
+      setSelectedLocations(newSelected);
+      if (deselectedCount > 0) {
+        toast({ title: "Locations excluded", description: `Removed ${deselectedCount} location${deselectedCount > 1 ? "s" : ""} with "${tagName}" tag` });
+      } else {
+        toast({ title: "No change", description: `No selected locations have the "${tagName}" tag` });
+      }
+    } catch {
+      toast({ title: "Error", description: "Failed to exclude locations by tag", variant: "destructive" });
+    }
+  };
+
   if (detailLocation) {
     return (
       <div className="h-screen bg-background flex overflow-hidden">
@@ -675,6 +694,26 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                   <SelectItem value="all">All tags</SelectItem>
                   {tags.map((t) => (
                     <SelectItem key={t.id} value={t.id} data-testid={`tag-option-${t.id}`}>{t.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+
+            {tags.length > 0 && selectedLocations.size > 0 && (
+              <Select
+                value="none"
+                onValueChange={(tagId) => {
+                  const tag = tags.find(t => t.id === tagId);
+                  if (tag) handleDeselectByTag(tag.id, tag.name);
+                }}
+              >
+                <SelectTrigger className="w-36 h-8 text-xs border-red-200 text-red-600 hover:bg-red-50" data-testid="select-exclude-tag">
+                  <SelectValue placeholder="− Exclude Tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none" disabled>Pick a tag to exclude</SelectItem>
+                  {tags.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
