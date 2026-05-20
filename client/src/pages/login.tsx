@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink, CheckCircle } from "lucide-react";
+import { getApiUrl } from "@/lib/queryClient";
 const redbullIcon = "/redbullicon.png";
 
 export default function Login() {
@@ -18,7 +19,7 @@ export default function Login() {
   const handleGoogleLogin = () => {
     setIsLoggingIn(true);
     // Redirect to Google OAuth
-    window.location.href = "/auth/google";
+    window.location.href = getApiUrl("/auth/google");
   };
 
   if (isLoading) {
