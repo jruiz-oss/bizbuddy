@@ -1,4 +1,4 @@
-// Manage Tags modal — supports adding and removing tags per location
+// Manage Tags modal — supports adding and removing tags for single or multiple locations
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -17,166 +17,172 @@ interface AddToTagModalProps {
 
 export function AddToTagModal({ open, onClose, selectedLocationIds }: AddToTagModalProps) {
   const { toast } = useToast();
-  const isSingleLocation = selectedLocationIds.length === 1;
-  const singleLocationId = isSingleLocation ? selectedLocationIds[0] : null;
 
-  // All tags
+  // All available tags
   const { data: tags = [], isLoading: tagsLoading } = useQuery<LocationTag[]>({
     queryKey: ["/api/tags"],
     enabled: open,
   });
 
-  // Existing tags for this location (only when single location selected)
-  const { data: existingTags = [], isLoading: existingLoading } = useQuery<LocationTag[]>({
-    queryKey: ["/api/locations", singleLocationId, "tags"],
-    queryFn: async () => {
-      const res = await fetch(`/api/locations/${singleLocationId}/tags`);
-      if (!res.ok) throw new Error("Failed to load location tags");
-      return res.json();
-    },
-    enabled: open && isSingleLocation && !!singleLocationId,
-  });
+  // tagId → Set of locationIds that currently have that tag
+  const [originalMap, setOriginalMap] = useState<Map<string, Set<string>>>(new Map());
+  // tagId → Set of locationIds that WILL have that tag after save
+  const [currentMap, setCurrentMap] = useState<Map<string, Set<string>>>(new Map());
+  const [loadingExisting, setLoadingExisting] = useState(false);
 
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
-  const [originalTags, setOriginalTags] = useState<Set<string>>(new Set());
-
-  // When existing tags load, pre-check them
+  // Fetch existing tags for all selected locations when modal opens
   useEffect(() => {
-    if (open && isSingleLocation && !existingLoading) {
-      const existingIds = new Set(existingTags.map((t) => t.id));
-      setSelectedTags(new Set(existingIds));
-      setOriginalTags(new Set(existingIds));
-    } else if (open && !isSingleLocation) {
-      setSelectedTags(new Set());
-      setOriginalTags(new Set());
-    }
-  }, [open, existingTags, existingLoading, isSingleLocation]);
+    if (!open || selectedLocationIds.length === 0) return;
 
-  // Reset when closed
+    setLoadingExisting(true);
+    Promise.all(
+      selectedLocationIds.map((locId) =>
+        fetch(`/api/locations/${locId}/tags`)
+          .then((r) => r.ok ? r.json() : [])
+          .then((locTags: LocationTag[]) => ({ locId, tagIds: locTags.map((t) => t.id) }))
+          .catch(() => ({ locId, tagIds: [] }))
+      )
+    ).then((results) => {
+      const map = new Map<string, Set<string>>();
+      for (const { locId, tagIds } of results) {
+        for (const tagId of tagIds) {
+          if (!map.has(tagId)) map.set(tagId, new Set());
+          map.get(tagId)!.add(locId);
+        }
+      }
+      setOriginalMap(map);
+      setCurrentMap(new Map(Array.from(map.entries()).map(([k, v]) => [k, new Set(v)])));
+      setLoadingExisting(false);
+    });
+  }, [open, selectedLocationIds.join(',')]);
+
+  // Reset on close
   useEffect(() => {
     if (!open) {
-      setSelectedTags(new Set());
-      setOriginalTags(new Set());
+      setOriginalMap(new Map());
+      setCurrentMap(new Map());
     }
   }, [open]);
 
   const assignMutation = useMutation({
-    mutationFn: async ({ tagId, locationId }: { tagId: string; locationId: string }) => {
-      return await apiRequest("POST", `/api/tags/${tagId}/locations/${locationId}`, {});
-    },
+    mutationFn: async ({ tagId, locationId }: { tagId: string; locationId: string }) =>
+      apiRequest("POST", `/api/tags/${tagId}/locations/${locationId}`, {}),
   });
 
   const removeMutation = useMutation({
-    mutationFn: async ({ tagId, locationId }: { tagId: string; locationId: string }) => {
-      return await apiRequest("DELETE", `/api/tags/${tagId}/locations/${locationId}`, undefined);
-    },
+    mutationFn: async ({ tagId, locationId }: { tagId: string; locationId: string }) =>
+      apiRequest("DELETE", `/api/tags/${tagId}/locations/${locationId}`, undefined),
   });
 
+  // A tag is "checked" if ALL selected locations currently have it in currentMap
+  const isChecked = (tagId: string) => {
+    const locs = currentMap.get(tagId);
+    return !!locs && selectedLocationIds.every((id) => locs.has(id));
+  };
+
+  // A tag is "indeterminate" if SOME (but not all) selected locations have it
+  const isIndeterminate = (tagId: string) => {
+    const locs = currentMap.get(tagId);
+    if (!locs || locs.size === 0) return false;
+    return selectedLocationIds.some((id) => locs.has(id)) && !selectedLocationIds.every((id) => locs.has(id));
+  };
+
   const handleTagToggle = (tagId: string, checked: boolean) => {
-    const newSelected = new Set(selectedTags);
+    const newMap = new Map(Array.from(currentMap.entries()).map(([k, v]) => [k, new Set(v)]));
     if (checked) {
-      newSelected.add(tagId);
+      // Add all selected locations to this tag
+      if (!newMap.has(tagId)) newMap.set(tagId, new Set());
+      for (const locId of selectedLocationIds) newMap.get(tagId)!.add(locId);
     } else {
-      newSelected.delete(tagId);
+      // Remove all selected locations from this tag
+      if (newMap.has(tagId)) {
+        for (const locId of selectedLocationIds) newMap.get(tagId)!.delete(locId);
+      }
     }
-    setSelectedTags(newSelected);
+    setCurrentMap(newMap);
   };
 
   const handleSave = async () => {
     let successCount = 0;
     let errorCount = 0;
 
-    if (isSingleLocation && singleLocationId) {
-      // Diff: add newly checked, remove newly unchecked
-      const toAdd = [...selectedTags].filter((id) => !originalTags.has(id));
-      const toRemove = [...originalTags].filter((id) => !selectedTags.has(id));
+    for (const tag of tags) {
+      const tagId = tag.id;
+      const origLocs = originalMap.get(tagId) ?? new Set<string>();
+      const currLocs = currentMap.get(tagId) ?? new Set<string>();
 
-      if (toAdd.length === 0 && toRemove.length === 0) {
-        toast({ title: "No changes", description: "No tags were added or removed." });
-        onClose();
-        return;
-      }
+      for (const locId of selectedLocationIds) {
+        const hadIt = origLocs.has(locId);
+        const hasIt = currLocs.has(locId);
 
-      for (const tagId of toAdd) {
-        try {
-          await assignMutation.mutateAsync({ tagId, locationId: singleLocationId });
-          successCount++;
-        } catch {
-          errorCount++;
-        }
-      }
-      for (const tagId of toRemove) {
-        try {
-          await removeMutation.mutateAsync({ tagId, locationId: singleLocationId });
-          successCount++;
-        } catch {
-          errorCount++;
-        }
-      }
-    } else {
-      // Multi-location: add only (original behaviour)
-      if (selectedTags.size === 0) {
-        toast({ title: "Error", description: "Please select at least one tag", variant: "destructive" });
-        return;
-      }
-      for (const tagId of Array.from(selectedTags)) {
-        for (const locationId of selectedLocationIds) {
-          try {
-            await assignMutation.mutateAsync({ tagId, locationId });
-            successCount++;
-          } catch {
-            errorCount++;
-          }
+        if (!hadIt && hasIt) {
+          try { await assignMutation.mutateAsync({ tagId, locationId: locId }); successCount++; }
+          catch { errorCount++; }
+        } else if (hadIt && !hasIt) {
+          try { await removeMutation.mutateAsync({ tagId, locationId: locId }); successCount++; }
+          catch { errorCount++; }
         }
       }
     }
 
-    // Invalidate relevant caches
+    if (successCount === 0 && errorCount === 0) {
+      toast({ title: "No changes", description: "No tags were added or removed." });
+      onClose();
+      return;
+    }
+
+    // Invalidate caches
     queryClient.invalidateQueries({ queryKey: ["/api/tags"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/locations", singleLocationId, "tags"] });
-    for (const tagId of Array.from(selectedTags)) {
-      queryClient.invalidateQueries({ queryKey: ["/api/tags", tagId, "locations"] });
-    }
     queryClient.invalidateQueries({ queryKey: ["/api/locations/all"] });
+    for (const locId of selectedLocationIds) {
+      queryClient.invalidateQueries({ queryKey: ["/api/locations", locId, "tags"] });
+    }
+    for (const tag of tags) {
+      queryClient.invalidateQueries({ queryKey: ["/api/tags", tag.id, "locations"] });
+    }
 
     if (errorCount === 0) {
-      toast({
-        title: "Saved",
-        description: isSingleLocation
-          ? "Tag assignments updated successfully."
-          : `Added ${selectedLocationIds.length} location(s) to ${selectedTags.size} tag(s).`,
-      });
+      toast({ title: "Saved", description: `Tag assignments updated for ${selectedLocationIds.length} location(s).` });
     } else {
-      toast({
-        title: "Partial Success",
-        description: `${successCount} change(s) applied. ${errorCount} failed.`,
-        variant: "default",
-      });
+      toast({ title: "Partial Success", description: `${successCount} change(s) applied. ${errorCount} failed.`, variant: "default" });
     }
 
-    setSelectedTags(new Set());
-    setOriginalTags(new Set());
     onClose();
   };
 
-  const isLoading = tagsLoading || (isSingleLocation && existingLoading);
+  const isLoading = tagsLoading || loadingExisting;
   const isPending = assignMutation.isPending || removeMutation.isPending;
 
-  // Compute whether there are actual changes (single-location mode)
-  const hasChanges = isSingleLocation
-    ? [...selectedTags].some((id) => !originalTags.has(id)) ||
-      [...originalTags].some((id) => !selectedTags.has(id))
-    : selectedTags.size > 0;
+  // Count how many selected locations currently have a given tag (for the hint label)
+  const countWithTag = (tagId: string) => {
+    const locs = currentMap.get(tagId);
+    if (!locs) return 0;
+    return selectedLocationIds.filter((id) => locs.has(id)).length;
+  };
+
+  const origCountWithTag = (tagId: string) => {
+    const locs = originalMap.get(tagId);
+    if (!locs) return 0;
+    return selectedLocationIds.filter((id) => locs.has(id)).length;
+  };
+
+  const hasChanges = tags.some((tag) => {
+    const origLocs = originalMap.get(tag.id) ?? new Set<string>();
+    const currLocs = currentMap.get(tag.id) ?? new Set<string>();
+    return selectedLocationIds.some((locId) => origLocs.has(locId) !== currLocs.has(locId));
+  });
+
+  const total = selectedLocationIds.length;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isSingleLocation ? "Manage Tags" : "Add Tags to Locations"}</DialogTitle>
+          <DialogTitle>Manage Tags</DialogTitle>
           <DialogDescription>
-            {isSingleLocation
+            {total === 1
               ? "Check tags to add them, uncheck to remove them from this location."
-              : `Select tags to add to ${selectedLocationIds.length} selected location(s).`}
+              : `Managing tags for ${total} locations. Check to add to all, uncheck to remove from all.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -188,31 +194,41 @@ export function AddToTagModal({ open, onClose, selectedLocationIds }: AddToTagMo
               No tags available. Create tags first in the Tag Management panel.
             </p>
           ) : (
-            tags.map((tag) => (
-              <div
-                key={tag.id}
-                className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50"
-              >
-                <Checkbox
-                  checked={selectedTags.has(tag.id)}
-                  onCheckedChange={(checked) => handleTagToggle(tag.id, !!checked)}
-                  data-testid={`checkbox-tag-${tag.id}`}
-                />
+            tags.map((tag) => {
+              const checked = isChecked(tag.id);
+              const indeterminate = isIndeterminate(tag.id);
+              const curr = countWithTag(tag.id);
+              const orig = origCountWithTag(tag.id);
+              const willAdd = curr > orig;
+              const willRemove = curr < orig;
+
+              return (
                 <div
-                  className="px-2 py-1 rounded-full text-xs font-medium text-white flex items-center gap-1"
-                  style={{ backgroundColor: tag.color || "#6366f1" }}
+                  key={tag.id}
+                  className="flex items-center gap-3 p-3 border rounded-lg hover:bg-muted/50"
                 >
-                  <Tag className="w-3 h-3" />
-                  {tag.name}
+                  <Checkbox
+                    checked={indeterminate ? "indeterminate" : checked}
+                    onCheckedChange={(val) => handleTagToggle(tag.id, val === true || val === "indeterminate" ? true : false)}
+                    data-testid={`checkbox-tag-${tag.id}`}
+                  />
+                  <div
+                    className="px-2 py-1 rounded-full text-xs font-medium text-white flex items-center gap-1 shrink-0"
+                    style={{ backgroundColor: tag.color || "#6366f1" }}
+                  >
+                    <Tag className="w-3 h-3" />
+                    {tag.name}
+                  </div>
+                  <div className="ml-auto flex items-center gap-2">
+                    {total > 1 && (
+                      <span className="text-xs text-muted-foreground">{curr}/{total}</span>
+                    )}
+                    {willAdd && <span className="text-xs text-green-600 font-medium">will add</span>}
+                    {willRemove && <span className="text-xs text-red-500 font-medium">will remove</span>}
+                  </div>
                 </div>
-                {isSingleLocation && originalTags.has(tag.id) && !selectedTags.has(tag.id) && (
-                  <span className="ml-auto text-xs text-red-500 font-medium">will remove</span>
-                )}
-                {isSingleLocation && !originalTags.has(tag.id) && selectedTags.has(tag.id) && (
-                  <span className="ml-auto text-xs text-green-600 font-medium">will add</span>
-                )}
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -225,7 +241,7 @@ export function AddToTagModal({ open, onClose, selectedLocationIds }: AddToTagMo
             disabled={!hasChanges || isPending}
             data-testid="button-confirm-add-tags"
           >
-            {isPending ? "Saving..." : isSingleLocation ? "Save Changes" : "Add Tags"}
+            {isPending ? "Saving..." : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>
