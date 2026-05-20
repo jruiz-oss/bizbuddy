@@ -412,8 +412,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       console.log('✅ User authenticated, tokens saved, and session created:', { userId: user.id, email: user.email });
       
-      // Redirect to main app after successful authentication (stays on the same domain)
-      res.redirect('/');
+      // Redirect to the frontend after successful authentication.
+      // In production the frontend lives on Vercel (FRONTEND_URL); fall back to '/' for local dev.
+      const frontendUrl = process.env.FRONTEND_URL || '/';
+      res.redirect(frontendUrl);
     } catch (error) {
       console.error('Error handling OAuth callback:', error);
       res.status(500).json({ error: 'Authentication failed' });
