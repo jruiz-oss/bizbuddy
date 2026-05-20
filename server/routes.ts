@@ -108,21 +108,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
 
   // Profile picture upload endpoint (requires authentication - auth runs BEFORE multer)
-  // Uses Vercel Blob for persistent storage
+  // Stores image as a base64 data URL directly in the DB — no external storage needed
   app.post("/api/upload/profile-picture", requireAuth, profilePictureUpload.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ message: "No file uploaded" });
       }
 
-      const filename = `profile-pictures/${Date.now()}-${req.file.originalname.replace(/[^a-z0-9.\-_]/gi, '_')}`;
-      const blob = await blobPut(filename, req.file.buffer, {
-        access: 'public',
-        contentType: req.file.mimetype,
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-
-      res.json({ url: blob.url });
+      const dataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+      res.json({ url: dataUrl });
     } catch (error) {
       console.error("Error uploading profile picture:", error);
       res.status(500).json({ message: "Failed to upload profile picture" });
