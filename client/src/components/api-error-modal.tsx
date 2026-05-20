@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApiError } from "@/contexts/api-error-context";
+import { getApiUrl } from "@/lib/queryClient";
 
 export function ApiErrorModal() {
   const { error, clearApiError } = useApiError();
@@ -8,7 +9,7 @@ export function ApiErrorModal() {
   if (!error.open) return null;
 
   const handleReauth = () => {
-    window.location.href = "/auth/google";
+    window.location.href = getApiUrl("/auth/google");
   };
 
   return (

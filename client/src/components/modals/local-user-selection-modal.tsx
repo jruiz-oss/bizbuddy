@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useLocalUserContext } from "@/contexts/local-user-context";
 import { User, Plus, Pencil, Trash2, Loader2, Upload, X, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -207,7 +207,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   };
 
   const handleForceRelogin = () => {
-    window.location.href = "/auth/google?prompt=consent";
+    window.location.href = getApiUrl("/auth/google?prompt=consent");
   };
 
   return (

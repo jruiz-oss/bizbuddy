@@ -14,7 +14,7 @@ import { Save, Key, Bell, Shield, User, Palette, Settings as SettingsIcon, LogOu
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { useLocation, Link as WouterLink } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import type { Client, ClientSettings, ReviewEmailGroup, ClientLocation } from "@shared/schema";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -122,7 +122,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
       });
       // Redirect to Google OAuth login after a short delay
       setTimeout(() => {
-        window.location.href = '/api/auth/google';
+        window.location.href = getApiUrl('/auth/google');
       }, 500);
     },
     onError: (error: Error) => {

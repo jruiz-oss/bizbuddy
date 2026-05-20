@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useJobProgress, JobProgress } from "@/hooks/use-job-progress";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
 import { Check, Clock, Play, CheckCircle2, Loader2, AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
+import { getApiUrl } from "@/lib/queryClient";
 
 interface JobProgressToastProps {
   jobId: string;
@@ -197,7 +198,7 @@ export function JobProgressToast({ jobId, jobType, onComplete }: JobProgressToas
           <div className="flex flex-col gap-2">
             {(progress.status === "failed" || progress.status === "partial") && (
               <Button
-                onClick={() => { window.location.href = "/auth/google"; }}
+                onClick={() => { window.location.href = getApiUrl("/auth/google"); }}
                 className="w-full gap-2"
                 data-testid="button-reauth-progress"
               >
