@@ -4318,6 +4318,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Debug: check token scopes and test Gmail API
+  app.get("/api/emails/debug", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session!.userId!;
+      const user = await storage.getUser(userId);
+      if (!user?.accessToken) {
+        return res.json({ error: "No access token in DB — user needs to re-login" });
+      }
+
+      // Check what scopes this token actually has via Google tokeninfo
+      const tokenInfoRes = await fetch(
+        `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${user.accessToken}`
+      );
+      const tokenInfo = await tokenInfoRes.json();
+
+      // Try a real Gmail send to yourself to get the raw error
+      const { sendEmail: testSendEmail } = await import("./gmail-service");
+      const result = await testSendEmail(
+        { to: user.email || "test@test.com", subject: "BizBuddy Gmail debug test", body: "If you see this, Gmail is working!", isHtml: false },
+        { accessToken: user.accessToken, refreshToken: user.refreshToken ?? null, userId: user.id }
+      );
+
+      res.json({ tokenInfo, gmailTestResult: result });
+    } catch (err: any) {
+      res.json({ error: err.message, stack: err.stack?.slice(0, 500) });
+    }
+  });
+
   // Review Email Groups
   app.get("/api/review-email-groups", requireAuth, async (req, res) => {
     try {
