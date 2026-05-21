@@ -72,7 +72,8 @@ class GoogleOAuthAuth {
       'https://www.googleapis.com/auth/business.manage',
       'https://www.googleapis.com/auth/devstorage.read_write',
       'https://www.googleapis.com/auth/userinfo.email',
-      'https://www.googleapis.com/auth/userinfo.profile'
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/gmail.send'
     ];
     
     const callbackUrl = this.getCallbackUrl(origin);
