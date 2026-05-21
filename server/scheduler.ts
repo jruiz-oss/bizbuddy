@@ -981,9 +981,9 @@ function generateReviewEmailHtml(
         ${customMessage.replace(/</g, '&lt;').replace(/>/g, '&gt;').split(/\r?\n/).filter((line: string) => line.trim() !== '').map((line: string) => `<p style="color: #1f2937; margin: 0 0 10px 0; line-height: 1.7; font-size: 15px;">${line}</p>`).join('')}
       </div>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin-bottom: 24px;" />` : ''}
-      <h1 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
+      <div style="color: #1f2937; font-size: 22px; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 16px; line-height: 1.3;">
         ${titleText}
-      </h1>
+      </div>
       <p style="color: #6b7280; margin-bottom: 20px;">
         ${dateRange}
       </p>
@@ -1016,7 +1016,7 @@ function generateReviewEmailHtml(
     html += `
       <div style="margin-bottom: 30px; border: 2px solid #e5e7eb; border-radius: 12px; padding: 20px;">
         <div style="background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0;">
-          <div style="color: #374151; font-size: 20px; font-weight: bold; line-height: 1.3;">📍 ${data.name || 'Unknown Location'}</div>
+          <div style="color: #374151; font-size: 16px; font-weight: bold; line-height: 1.3;">📍 ${data.name || 'Unknown Location'}</div>
           ${data.address ? `<div style="font-size: 14px; color: #6b7280; margin-top: 4px;">${data.address}</div>` : ''}
         </div>
         ${copyLinkHtml}
@@ -1052,10 +1052,10 @@ function generateReviewEmailHtml(
   for (const loc of locationsWithZero) {
     html += `
       <div style="margin-bottom: 30px; border: 2px solid #e5e7eb; border-radius: 12px; padding: 20px;">
-        <h2 style="color: #374151; background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0; overflow: hidden;">
+        <div style="color: #374151; font-size: 16px; font-weight: bold; line-height: 1.3; background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0;">
           📍 ${loc.name || 'Unknown Location'}
           ${loc.address ? `<span style="font-size: 14px; font-weight: normal; color: #6b7280; display: block;">${loc.address}</span>` : ''}
-        </h2>
+        </div>
         <p style="color: #9ca3af; margin: 0; font-size: 14px; font-style: italic;">No new reviews this period.</p>
       </div>
     `;
