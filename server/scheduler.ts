@@ -711,9 +711,13 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       `total matching reviews: ${allReviews.length}`
     );
     
-    // Determine the app base URL for copy links (production domain takes priority)
-    const appDomain = process.env.REPLIT_DOMAINS?.split(',')[0]?.trim();
-    const appBaseUrl = appDomain ? `https://${appDomain}` : undefined;
+    // Determine the app base URL for copy links.
+    // Priority: explicit APP_URL env var → Replit domains → undefined (buttons hidden)
+    const appBaseUrl =
+      process.env.APP_URL?.trim() ||
+      (process.env.REPLIT_DOMAINS?.split(',')[0]?.trim()
+        ? `https://${process.env.REPLIT_DOMAINS.split(',')[0].trim()}`
+        : undefined);
 
     // Generate email HTML with all checked locations (even if no reviews)
     const emailHtml = generateReviewEmailHtml(allReviews, group.name, minStars, maxStars, lookbackDays, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
