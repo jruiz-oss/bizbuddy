@@ -3506,6 +3506,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // SUGGESTED EDITS ROUTES
   // ============================================
 
+  // Diagnostic endpoint — tests Google API auth + one real location call, returns raw result
+  app.get("/api/suggested-edits/diagnose", async (req, res) => {
+    try {
+      const { googleOAuthAuth } = await import("./google-service-auth");
+
+      const authenticated = googleOAuthAuth.isAuthenticated();
+      if (!authenticated) {
+        return res.json({ ok: false, step: "isAuthenticated", error: "googleOAuthAuth.isAuthenticated() returned false — tokens not in memory" });
+      }
+
+      // Grab one location from the DB to test against
+      const testLocations = await db.select().from(clientLocations).limit(1);
+      if (!testLocations.length) {
+        return res.json({ ok: false, step: "db", error: "No locations found in clientLocations table" });
+      }
+
+      const loc = testLocations[0];
+      let locationName = loc.gbpLocationId;
+      if (!locationName.startsWith('locations/')) locationName = `locations/${locationName}`;
+
+      // Try the raw getLocation call
+      let locationResult: any = null;
+      let locationError: any = null;
+      try {
+        locationResult = await googleOAuthAuth.getLocation(locationName);
+      } catch (err: any) {
+        locationError = err?.message || String(err);
+      }
+
+      // Try getGoogleUpdated directly
+      let updatedResult: any = null;
+      let updatedError: any = null;
+      try {
+        updatedResult = await googleOAuthAuth.getGoogleUpdatedLocation(locationName);
+      } catch (err: any) {
+        updatedError = err?.message || String(err);
+      }
+
+      return res.json({
+        ok: !locationError,
+        authenticated,
+        testedLocation: { id: loc.id, gbpLocationId: locationName, name: loc.name },
+        getLocation: { result: locationResult, error: locationError },
+        getGoogleUpdated: { result: updatedResult, error: updatedError },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, step: "unexpected", error: err?.message || String(err) });
+    }
+  });
+
   // Scan all locations for Google-suggested updates (with SSE progress streaming)
   // Accepts optional query params: folderIds (comma-separated) and locationIds (comma-separated)
   app.get("/api/suggested-edits/scan", async (req, res) => {
