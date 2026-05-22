@@ -429,7 +429,6 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const nearby = useMemo(() => {
     type Row = { id: string; loc: ClientLocation; status: PinStatus; lat: number | null; lng: number | null; distance: number };
     const rows: Row[] = filteredLocations
-      .filter((l) => l.id !== primaryLocation?.id)
       .map((l) => {
         const lat = l.latitude != null ? Number(l.latitude) : NaN;
         const lng = l.longitude != null ? Number(l.longitude) : NaN;
