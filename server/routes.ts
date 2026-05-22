@@ -3580,13 +3580,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const results: any[] = [];
       let scanned = 0;
       let withUpdates = 0;
+      let errored = 0;
+      let firstError: string | null = null;
 
       // Process locations in parallel batches
       const BATCH_SIZE = 10;
-      
+
       for (let i = 0; i < allLocations.length; i += BATCH_SIZE) {
         const batch = allLocations.slice(i, i + BATCH_SIZE);
-        
+
         // Process batch in parallel
         const batchPromises = batch.map(async (location) => {
           try {
@@ -3594,7 +3596,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!locationName.startsWith('locations/')) {
               locationName = `locations/${locationName}`;
             }
-            
+
             const checkResult = await googleOAuthAuth.checkForGoogleUpdates(locationName);
             
             if (checkResult.hasUpdates) {
@@ -3692,30 +3694,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
             }
             return null;
-          } catch (error) {
-            console.error(`Error checking location ${location.id}:`, error);
-            return null;
+          } catch (error: any) {
+            const msg = error?.message || String(error);
+            console.error(`❌ Error checking location ${location.gbpLocationId}:`, msg);
+            return { __error: true, message: msg };
           }
         });
 
         const batchResults = await Promise.all(batchPromises);
-        
-        // Count ALL locations in this batch (not just those with updates)
+
+        // Count ALL locations in this batch
         scanned += batch.length;
-        
-        // Process results - only add locations that have updates
+
+        // Process results
         for (const result of batchResults) {
-          if (result) {
+          if (!result) continue;
+          if ((result as any).__error) {
+            errored++;
+            if (!firstError) firstError = (result as any).message;
+          } else {
             withUpdates++;
             results.push(result);
           }
         }
 
+        // If every location so far has errored, bail early with an error event
+        if (scanned === errored && scanned >= BATCH_SIZE) {
+          console.error(`🚨 Scan aborting early — all ${scanned} locations errored. First error: ${firstError}`);
+          sendEvent('error', {
+            message: `Google API calls are failing for all locations. ${firstError || 'Check authentication and API permissions.'}`,
+            errored,
+            scanned
+          });
+          res.end();
+          return;
+        }
+
         // Send progress update
-        sendEvent('progress', { 
-          scanned, 
+        sendEvent('progress', {
+          scanned,
           total: totalLocations,
-          withUpdates 
+          withUpdates,
+          errored
         });
 
         // Small delay between batches to avoid rate limiting
@@ -3728,6 +3748,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sendEvent('complete', {
         scanned,
         withUpdates,
+        errored,
+        firstError,
         results
       });
 

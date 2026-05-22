@@ -1035,18 +1035,12 @@ class GoogleOAuthAuth {
       throw new Error('User not authenticated. Please log in first.');
     }
     
-    try {
-      const location = await this.getLocation(locationName);
-      const hasGoogleUpdated = location?.metadata?.hasGoogleUpdated || false;
-      
-      return {
-        hasUpdates: hasGoogleUpdated,
-        location
-      };
-    } catch (error: any) {
-      console.error('Error checking for Google updates:', error.message || error);
-      return { hasUpdates: false, location: null };
-    }
+    const location = await this.getLocation(locationName);
+    const hasGoogleUpdated = location?.metadata?.hasGoogleUpdated || false;
+    return {
+      hasUpdates: hasGoogleUpdated,
+      location
+    };
   }
 
   // Get Google-suggested updates for a location

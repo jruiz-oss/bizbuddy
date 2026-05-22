@@ -191,17 +191,36 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       const grouped = groupResultsByCategory(data.results);
       const firstCat = editCategories.find(c => (grouped[c.id] || []).length > 0);
       if (firstCat) setSelectedCategoryId(firstCat.id);
-      toast({
-        title: "Scan Complete",
-        description: `Scanned ${data.scanned} locations, found ${data.withUpdates} with pending Google updates.`,
-      });
+
+      if (data.errored > 0) {
+        // Some locations failed — warn the user with the actual error message
+        const errorHint = data.firstError
+          ? `Google API error: ${data.firstError}`
+          : "Some locations could not be checked.";
+        toast({
+          title: "Scan Complete (with errors)",
+          description: `Found ${data.withUpdates} update(s). ${data.errored} location(s) failed. ${errorHint}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Scan Complete",
+          description: `Scanned ${data.scanned} locations, found ${data.withUpdates} with pending Google updates.`,
+        });
+      }
       setIsScanning(false);
       setScanProgress(null);
       eventSource.close();
     });
 
-    eventSource.addEventListener('error', (event) => {
-      showApiError("Scan Failed", "Failed to scan for suggested edits. Your Google session may have expired.");
+    eventSource.addEventListener('error', (event: any) => {
+      // Custom error event from server — extract the message if available
+      let detail = "Failed to scan for suggested edits. Your Google session may have expired.";
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.message) detail = data.message;
+      } catch {}
+      showApiError("Scan Failed", detail);
       setIsScanning(false);
       setScanProgress(null);
       eventSource.close();
