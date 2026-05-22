@@ -915,7 +915,12 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                       key={p.id}
                       position={[p.lat, p.lng]}
                       icon={makePinIcon(PIN_COLORS[p.status], isFocus || isInSelection)}
-                      eventHandlers={{ click: () => setPrimaryPinId(p.id) }}
+                      eventHandlers={{
+                        click: () => {
+                          setPrimaryPinId(p.id);
+                          setSelectedPinIds((prev) => new Set([...prev, p.id]));
+                        },
+                      }}
                     />
                   );
                 })}
