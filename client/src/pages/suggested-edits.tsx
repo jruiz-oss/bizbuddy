@@ -11,7 +11,7 @@ import { formatPhoenixDateTime } from "@/lib/formatDate";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -156,8 +156,8 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
     setScanResults([]);
     setShowScanOptions(false);
 
-    // Build URL with optional folder and location filters
-    let url = "/api/suggested-edits/scan";
+    // Build URL — use getApiUrl so it points to Railway in production (not Vercel)
+    let url = getApiUrl("/api/suggested-edits/scan");
     const params = new URLSearchParams();
     if (folderIds.length > 0) {
       params.set("folderIds", folderIds.join(","));
