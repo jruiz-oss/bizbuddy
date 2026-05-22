@@ -970,64 +970,42 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                 </div>
               </div>
             )}
+
+            {/* Floating selected-location card — overlaid on the map */}
+            {primaryLocation && (
+              <div className="absolute top-14 right-4 z-[500] w-[320px] bg-white rounded-xl shadow-xl border border-gray-200 overflow-hidden" data-testid="map-popup-card">
+                <SelectedCard
+                  location={primaryLocation}
+                  client={clientById.get(primaryLocation.clientId)}
+                  status={pinStatusFor(primaryLocation, clientById.get(primaryLocation.clientId))}
+                  callCount={selectedPerf?.callClicks ?? null}
+                  viewCount={selectedPerf?.impressionsTotal ?? null}
+                  dailyPerf={selectedPerf?.daily ?? null}
+                  perfRange={perfRange}
+                  onPerfRangeChange={setPerfRange}
+                  columns={columns}
+                  onOpenDetail={() => setDetailLocation(primaryLocation)}
+                  onEdit={() => handleEditClick(primaryLocation)}
+                  onHide={async () => {
+                    await apiRequest("POST", `/api/locations/${primaryLocation.id}/hide`, {});
+                    queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/all"] });
+                    toast({ title: "Hidden", description: "Location hidden from map" });
+                  }}
+                  isShowingHidden={isShowingHidden}
+                  onUnhide={async () => {
+                    await apiRequest("POST", `/api/locations/${primaryLocation.id}/unhide`, {});
+                    queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/all"] });
+                    queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/hidden"] });
+                    toast({ title: "Restored" });
+                  }}
+                  onClose={() => setPrimaryPinId(null)}
+                />
+              </div>
+            )}
           </div>
 
           {/* Right pane (~30%) */}
           <aside className="w-[360px] xl:w-[440px] 2xl:w-[560px] border border-border/60 flex flex-col bg-white overflow-hidden rounded-lg shadow-sm" data-testid="side-pane">
-            {primaryLocation ? (
-              <SelectedCard
-                location={primaryLocation}
-                client={clientById.get(primaryLocation.clientId)}
-                status={pinStatusFor(primaryLocation, clientById.get(primaryLocation.clientId))}
-                callCount={selectedPerf?.callClicks ?? null}
-                viewCount={selectedPerf?.impressionsTotal ?? null}
-                dailyPerf={selectedPerf?.daily ?? null}
-                perfRange={perfRange}
-                onPerfRangeChange={setPerfRange}
-                columns={columns}
-                onOpenDetail={() => setDetailLocation(primaryLocation)}
-                onEdit={() => handleEditClick(primaryLocation)}
-                onHide={async () => {
-                  await apiRequest("POST", `/api/locations/${primaryLocation.id}/hide`, {});
-                  queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/all"] });
-                  toast({ title: "Hidden", description: "Location hidden from map" });
-                }}
-                isShowingHidden={isShowingHidden}
-                onUnhide={async () => {
-                  await apiRequest("POST", `/api/locations/${primaryLocation.id}/unhide`, {});
-                  queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/all"] });
-                  queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/hidden"] });
-                  toast({ title: "Restored" });
-                }}
-                onClose={() => setPrimaryPinId(null)}
-              />
-            ) : (
-              <div className="p-6 text-center text-sm text-gray-500" data-testid="empty-selected">
-                Select a location to see details.
-              </div>
-            )}
-
-            {/* NEARBY header (and selection toolbar when ≥1 checked) */}
-            <div className="border-t border-border/60 px-4 py-3 flex items-center justify-between">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide" data-testid="text-nearby-header">
-                {primary ? "Nearby" : "All locations"}{" "}
-                <span className="ml-1 text-gray-400 normal-case tracking-normal">
-                  · {nearby.length.toLocaleString()} {primary ? "shown" : "in list"}
-                </span>
-              </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs text-gray-600"
-                onClick={selectedPinIds.size === pinnedLocations.length && pinnedLocations.length > 0 ? clearSelection : selectAllVisible}
-                disabled={pinnedLocations.length === 0}
-                data-testid="button-select-all-visible"
-              >
-                <CheckSquare className="w-3.5 h-3.5 mr-1" />
-                {selectedPinIds.size === pinnedLocations.length && pinnedLocations.length > 0 ? "Clear all" : "Select all"}
-              </Button>
-            </div>
-
             {selectedPinIds.size > 0 && (
               <div className="border-b border-border/60 bg-cyan-50/60 px-4 py-2 flex items-center justify-between gap-2 flex-wrap" data-testid="nearby-selection-toolbar">
                 <span className="text-xs font-medium text-gray-800" data-testid="text-selection-count">{selectedPinIds.size} selected</span>
@@ -1061,6 +1039,27 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                 </div>
               </div>
             )}
+
+            {/* NEARBY header */}
+            <div className="border-b border-border/60 px-4 py-3 flex items-center justify-between">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide" data-testid="text-nearby-header">
+                {primary ? "Nearby" : "All locations"}{" "}
+                <span className="ml-1 text-gray-400 normal-case tracking-normal">
+                  · {nearby.length.toLocaleString()} {primary ? "shown" : "in list"}
+                </span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-gray-600"
+                onClick={selectedPinIds.size === pinnedLocations.length && pinnedLocations.length > 0 ? clearSelection : selectAllVisible}
+                disabled={pinnedLocations.length === 0}
+                data-testid="button-select-all-visible"
+              >
+                <CheckSquare className="w-3.5 h-3.5 mr-1" />
+                {selectedPinIds.size === pinnedLocations.length && pinnedLocations.length > 0 ? "Clear all" : "Select all"}
+              </Button>
+            </div>
 
             <div className="flex-1 overflow-y-auto" data-testid="nearby-list">
               {nearby.length === 0 ? (
