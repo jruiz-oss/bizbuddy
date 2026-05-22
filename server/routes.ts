@@ -3570,10 +3570,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Scan all locations for Google-suggested updates (with SSE progress streaming)
   // Accepts optional query params: folderIds (comma-separated) and locationIds (comma-separated)
   app.get("/api/suggested-edits/scan", async (req, res) => {
-    // Set up SSE headers
+    console.log('🚀 [SCAN] Endpoint hit — setting up SSE');
+    // Set up SSE headers (X-Accel-Buffering: no disables Railway/Nginx proxy buffering for SSE)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
     const sendEvent = (event: string, data: any) => {
@@ -3581,12 +3583,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
+    // Heartbeat every 15s — keeps Railway proxy from closing the SSE connection mid-scan
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 15000);
+
+    const cleanup = () => clearInterval(heartbeat);
+    req.on('close', cleanup);
+
     try {
       const { googleOAuthAuth } = await import("./google-service-auth");
       
       if (!googleOAuthAuth.isAuthenticated()) {
         sendEvent('error', { message: "Not authenticated" });
-        res.end();
+        cleanup(); res.end();
         return;
       }
 
@@ -3793,7 +3803,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             errored,
             scanned
           });
-          res.end();
+          cleanup(); res.end();
           return;
         }
 
@@ -3820,11 +3830,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         results
       });
 
-      res.end();
+      cleanup(); res.end();
     } catch (error) {
       console.error("Error scanning for suggested edits:", error);
       sendEvent('error', { message: "Failed to scan for suggested edits" });
-      res.end();
+      cleanup(); res.end();
     }
   });
 
