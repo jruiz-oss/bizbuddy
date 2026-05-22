@@ -1239,31 +1239,33 @@ function SelectedCard({
   const RANGES: Array<"7" | "30" | "90"> = ["7", "30", "90"];
 
   return (
-    <div className="p-4 border-b border-border/60 relative" data-testid="selected-card">
-      <button
-        type="button"
-        onClick={onClose}
-        className="absolute top-2 right-2 p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100"
-        aria-label="Clear selection"
-        data-testid="button-clear-selected"
-      >
-        <X className="w-4 h-4" />
-      </button>
+    <div className="p-4 border-b border-border/60" data-testid="selected-card">
       <div className="flex items-center justify-between mb-2">
         <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Selected</div>
-        <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5" data-testid="perf-range-toggle">
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              onClick={() => onPerfRangeChange(r)}
-              data-testid={`button-perf-range-${r}d`}
-              className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors ${
-                perfRange === r ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
-              }`}
-            >
-              {r}d
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0.5 bg-gray-100 rounded-md p-0.5" data-testid="perf-range-toggle">
+            {RANGES.map((r) => (
+              <button
+                key={r}
+                onClick={() => onPerfRangeChange(r)}
+                data-testid={`button-perf-range-${r}d`}
+                className={`text-[10px] px-1.5 py-0.5 rounded font-medium transition-colors ${
+                  perfRange === r ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {r}d
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+            aria-label="Clear selection"
+            data-testid="button-clear-selected"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
       </div>
       <div className="flex items-start gap-3">
@@ -1303,7 +1305,7 @@ function SelectedCard({
       )}
 
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" className="flex-1" onClick={onOpenDetail} data-testid="button-open-detail">
+        <Button size="sm" className="flex-1 bg-[#001f3f] hover:bg-[#001f3f]/90 text-white" onClick={onOpenDetail} data-testid="button-open-detail">
           <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Open detail
         </Button>
         <Button size="sm" variant="outline" onClick={onEdit} data-testid="button-edit-location">
