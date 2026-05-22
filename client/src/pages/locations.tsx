@@ -1088,7 +1088,10 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: PIN_COLORS[p.status] }} />
                         <button
                           className="flex-1 min-w-0 text-left"
-                          onClick={() => setPrimaryPinId(p.id)}
+                          onClick={() => {
+                            setPrimaryPinId(p.id);
+                            setSelectedPinIds((prev) => new Set([...prev, p.id]));
+                          }}
                           data-testid={`button-nearby-focus-${p.id}`}
                         >
                           <div className="text-sm font-medium text-gray-900 truncate" data-testid={`text-nearby-name-${p.id}`}>{p.loc.name}</div>
