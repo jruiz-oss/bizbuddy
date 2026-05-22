@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Search, MapPin, Phone, Star, Folder, FolderPlus, Loader2,
+  Search, MapPin, Phone, Star, Folder, FolderPlus, FolderMinus, Loader2,
   EyeOff, Eye, RefreshCw, Pencil, ExternalLink, AlertTriangle,
   Map as MapIcon, Table as TableIcon, Columns as ColumnsIcon, LayoutGrid,
   Download, SlidersHorizontal, Maximize2, Clock, MessageSquarePlus, ImagePlus, Tag as TagIcon, CheckSquare, X,
@@ -512,6 +512,33 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
     else if (modal === "photo") setShowPhotoModal(true);
     else if (modal === "folder") setShowAddToFolderModal(true);
     else if (modal === "tag") setShowAddToTagModal(true);
+  };
+
+  const handleRemoveFromFolder = async () => {
+    if (!folderFilter || folderFilter === "all" || folderFilter === "hidden") return;
+    const ids = Array.from(selectedPinIds);
+    if (ids.length === 0) return;
+
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const locationId of ids) {
+      try {
+        await apiRequest("DELETE", `/api/folders/${folderFilter}/locations/${locationId}`, {});
+        successCount++;
+      } catch {
+        errorCount++;
+      }
+    }
+
+    queryClient.invalidateQueries({ queryKey: ["/api/folders", folderFilter, "locations"] });
+    clearSelection();
+
+    if (errorCount === 0) {
+      toast({ title: "Removed", description: `Removed ${successCount} location${successCount !== 1 ? "s" : ""} from folder.` });
+    } else {
+      toast({ title: "Partial success", description: `Removed ${successCount}, ${errorCount} failed.`, variant: "default" });
+    }
   };
 
   const handleDeselectByTag = async (tagId: string, tagName: string) => {
@@ -1020,6 +1047,11 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                   <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs" onClick={() => openBulkAction("tag")} data-testid="button-bulk-tag">
                     <TagIcon className="w-3 h-3" /> Tag
                   </Button>
+                  {folderFilter !== "all" && folderFilter !== "hidden" && (
+                    <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50" onClick={handleRemoveFromFolder} data-testid="button-bulk-remove-folder">
+                      <FolderMinus className="w-3 h-3" /> Remove from folder
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs" onClick={fitToSelection} data-testid="button-fit-selection">
                     <Maximize2 className="w-3 h-3" /> Fit
                   </Button>
