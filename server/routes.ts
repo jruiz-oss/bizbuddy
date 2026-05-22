@@ -3516,10 +3516,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ ok: false, step: "isAuthenticated", error: "googleOAuthAuth.isAuthenticated() returned false — tokens not in memory" });
       }
 
-      // Grab one location from the DB to test against
-      const testLocations = await db.select().from(clientLocations).limit(1);
+      // Count all locations and how many are hidden
+      const allLocs = await db.select().from(clientLocations);
+      const totalLocs = allLocs.length;
+      const hiddenLocs = allLocs.filter(l => l.hidden).length;
+      const visibleLocs = totalLocs - hiddenLocs;
+
+      if (!totalLocs) {
+        return res.json({ ok: false, step: "db", error: "No locations found in clientLocations table", locationCounts: { total: 0, hidden: 0, visible: 0 } });
+      }
+
+      // Grab first visible location to test against, fall back to first of any
+      const testLocations = allLocs.filter(l => !l.hidden);
       if (!testLocations.length) {
-        return res.json({ ok: false, step: "db", error: "No locations found in clientLocations table" });
+        return res.json({ ok: false, step: "hidden_filter", error: `All ${totalLocs} locations are marked hidden — the scan would complete instantly with 0 results`, locationCounts: { total: totalLocs, hidden: hiddenLocs, visible: 0 } });
       }
 
       const loc = testLocations[0];
@@ -3547,6 +3557,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         ok: !locationError,
         authenticated,
+        locationCounts: { total: totalLocs, hidden: hiddenLocs, visible: visibleLocs },
         testedLocation: { id: loc.id, gbpLocationId: locationName, name: loc.name },
         getLocation: { result: locationResult, error: locationError },
         getGoogleUpdated: { result: updatedResult, error: updatedError },
@@ -3621,10 +3632,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Filter out hidden locations - they should not appear in suggested edits
+      const beforeHiddenFilter = allLocations.length;
       allLocations = allLocations.filter(loc => !loc.hidden);
-
       const totalLocations = allLocations.length;
-      
+
+      console.log(`🔍 Suggested edits scan: ${beforeHiddenFilter} total locations, ${beforeHiddenFilter - totalLocations} hidden, ${totalLocations} to scan`);
+
+      if (totalLocations === 0) {
+        console.warn(`⚠️ Scan has 0 locations to check — completing immediately. All ${beforeHiddenFilter} locations may be marked hidden.`);
+      }
+
       sendEvent('start', { total: totalLocations });
 
       const results: any[] = [];

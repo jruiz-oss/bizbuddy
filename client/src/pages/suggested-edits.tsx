@@ -202,12 +202,8 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
           description: `Found ${data.withUpdates} update(s). ${data.errored} location(s) failed. ${errorHint}`,
           variant: "destructive",
         });
-      } else {
-        toast({
-          title: "Scan Complete",
-          description: `Scanned ${data.scanned} locations, found ${data.withUpdates} with pending Google updates.`,
-        });
       }
+      // No toast on clean success — the result (or "no suggestions" message) is shown inline
       setIsScanning(false);
       setScanProgress(null);
       eventSource.close();
@@ -1127,12 +1123,28 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                 return availableCategories.length === 0 ? (
                   <div className="p-12 text-center">
                     <Lightbulb className="w-8 h-8 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                      No Suggestions Found
-                    </h3>
-                    <p className="text-gray-600 dark:text-gray-400">
-                      All scanned locations are up to date.
-                    </p>
+                    {lastScannedTime ? (
+                      <>
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                          No Pending Suggestions
+                        </h3>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          Google has no suggested edits for your locations right now. Check back later.
+                        </p>
+                        <p className="text-xs text-gray-400 mt-3">
+                          Last scanned {formatPhoenixDateTime(lastScannedTime)}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                          No Scan Run Yet
+                        </h3>
+                        <p className="text-gray-600 dark:text-gray-400">
+                          Run a scan to check if Google has any suggested edits for your locations.
+                        </p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <Tabs value={activeCategory} onValueChange={setSelectedCategoryId} className="w-full">
