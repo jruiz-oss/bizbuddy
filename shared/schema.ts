@@ -260,6 +260,8 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   isEnabled: boolean("is_enabled").notNull().default(true),
   startDate: text("start_date"), // YYYY-MM-DD in Phoenix time; emails won't send before this date
   lastEmailSentAt: timestamp("last_email_sent_at"),
+  outputFormat: text("output_format").notNull().default("email"), // "email" | "sheet"
+  sheetBreakout: text("sheet_breakout").notNull().default("region"), // "region" | "location" | "none"
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

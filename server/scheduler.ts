@@ -6,7 +6,8 @@ import { and, eq, inArray, isNotNull, isNull, lt, max, or } from "drizzle-orm";
 import type { InsertLocationPerformanceData } from "@shared/schema";
 import { storage } from "./storage";
 import { processJob } from "./job-processor";
-import { sendEmail, type InlineImage } from "./gmail-service";
+import { sendEmail, type InlineImage, type EmailAttachment } from "./gmail-service";
+import { generateReviewsXlsx } from "./utils/review-xlsx-generator";
 import fs from "fs";
 import path from "path";
 
@@ -719,10 +720,18 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         ? `https://${process.env.REPLIT_DOMAINS.split(',')[0].trim()}`
         : undefined);
 
+    const outputFormat = (group as any).outputFormat || 'email';
+    const starText = minStars === maxStars ? `${minStars} star` : `${minStars}-${maxStars} stars`;
+
+    // For sheet format, skip if no reviews (nothing to attach)
+    if (outputFormat === 'sheet' && allReviews.length === 0) {
+      console.log(`📊 No reviews to include in spreadsheet for group "${group.name}", skipping`);
+      return;
+    }
+
     // Generate email HTML with all checked locations (even if no reviews)
     const emailHtml = generateReviewEmailHtml(allReviews, group.name, minStars, maxStars, lookbackDays, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
-    const starText = minStars === maxStars ? `${minStars} star` : `${minStars}-${maxStars} stars`;
-    
+
     let subjectText: string;
     if (allReviews.length === 0) {
       subjectText = `Review Summary — No New ${starText} Reviews`;
@@ -800,15 +809,53 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       return;
     }
 
+    // Build xlsx attachment if this group uses sheet format
+    let xlsxAttachments: EmailAttachment[] | undefined;
+    if (outputFormat === 'sheet' && allReviews.length > 0) {
+      console.log(`📊 Generating spreadsheet attachment for group "${group.name}"...`);
+      const breakout = ((group as any).sheetBreakout || 'region') as 'region' | 'location' | 'none';
+      const nowDate = new Date();
+      const rangeStart = new Date(nowDate);
+      rangeStart.setDate(rangeStart.getDate() - lookbackDays);
+      const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${nowDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      const reviewsForSheet = allReviews.map((r: any) => ({
+        locationName: r.locationName || 'Unknown',
+        locationAddress: r.locationAddress,
+        starRating: r.starRating,
+        reviewer: r.reviewer,
+        reviewDate: r.createTime,
+        reviewText: r.comment || '',
+        responseAuthor: r.reviewReply?.author || undefined,
+        responseDate: r.reviewReply?.updateTime || undefined,
+        responseText: r.reviewReply?.comment || undefined,
+      }));
+      const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
+      const filename = `reviews-${group.name.toLowerCase().replace(/\s+/g, '-')}-${nowDate.toISOString().split('T')[0]}.xlsx`;
+      xlsxAttachments = [{
+        filename,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        data: xlsxBuffer,
+      }];
+    }
+
+    // For sheet format, use a short plain-text body; otherwise use the HTML email
+    const emailBody = outputFormat === 'sheet' && xlsxAttachments
+      ? (group.customMessage
+          ? `${group.customMessage}\n\nSee the attached spreadsheet for ${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} (${starText}).`
+          : `Please find attached your review recap for the past ${lookbackDays} days.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
+      : emailHtml;
+    const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
+
     try {
       const result = await sendEmail(
         {
           to: toRecipients,
           subject: subjectText,
-          body: emailHtml,
-          isHtml: true,
+          body: emailBody,
+          isHtml: emailIsHtml,
           cc: ccRecipients || undefined,
-          inlineImages: inlineImages.length > 0 ? inlineImages : undefined,
+          inlineImages: (!xlsxAttachments && inlineImages.length > 0) ? inlineImages : undefined,
+          attachments: xlsxAttachments,
         },
         {
           accessToken: activeUser.accessToken,

@@ -54,6 +54,12 @@ export interface InlineImage {
   base64Data: string;   // raw base64 string (no data: prefix)
 }
 
+export interface EmailAttachment {
+  filename: string;     // e.g. "reviews.xlsx"
+  mimeType: string;     // e.g. "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  data: Buffer;         // file contents
+}
+
 interface EmailOptions {
   to: string;
   subject: string;
@@ -61,6 +67,7 @@ interface EmailOptions {
   isHtml?: boolean;
   cc?: string;
   inlineImages?: InlineImage[];
+  attachments?: EmailAttachment[];
 }
 
 function encodeMimeSubject(subject: string): string {
@@ -69,12 +76,59 @@ function encodeMimeSubject(subject: string): string {
 }
 
 function createRawEmail(options: EmailOptions): string {
-  const { to, subject, body, isHtml = false, cc, inlineImages } = options;
+  const { to, subject, body, isHtml = false, cc, inlineImages, attachments } = options;
   const boundary = '----=_BizBuddyBoundary_' + Date.now();
+  const innerBoundary = '----=_BizBuddyInner_' + Date.now();
 
   let email: string;
 
-  if (isHtml && inlineImages && inlineImages.length > 0) {
+  if (attachments && attachments.length > 0) {
+    // multipart/mixed for file attachments (xlsx etc.)
+    // Body can be plain or HTML; goes in the first part.
+    const contentType = isHtml ? 'text/html' : 'text/plain';
+    const bodyBase64 = Buffer.from(body, 'utf8')
+      .toString('base64')
+      .match(/.{1,76}/g)!
+      .join('\r\n');
+
+    const headerLines = [
+      `To: ${to}`,
+      ...(cc ? [`Cc: ${cc}`] : []),
+      `Subject: ${encodeMimeSubject(subject)}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ];
+
+    const bodyPart = [
+      `--${boundary}`,
+      `Content-Type: ${contentType}; charset=utf-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      bodyBase64,
+    ];
+
+    const attachmentParts = attachments.map(att => {
+      const attBase64 = att.data.toString('base64').match(/.{1,76}/g)!.join('\r\n');
+      return [
+        `--${boundary}`,
+        `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+        `Content-Transfer-Encoding: base64`,
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        ``,
+        attBase64,
+      ].join('\r\n');
+    });
+
+    email = [
+      headerLines.join('\r\n'),
+      ``,
+      bodyPart.join('\r\n'),
+      ``,
+      ...attachmentParts,
+      ``,
+      `--${boundary}--`,
+    ].join('\r\n');
+  } else if (isHtml && inlineImages && inlineImages.length > 0) {
     // multipart/related so inline CID images are embedded directly in the message.
     // The HTML body is base64-encoded within the part to preserve all inline styles exactly.
     const htmlBase64 = Buffer.from(body, 'utf8')

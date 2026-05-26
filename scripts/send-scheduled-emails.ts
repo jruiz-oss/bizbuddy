@@ -4,6 +4,7 @@ import ws from "ws";
 import { eq, inArray, isNotNull, and } from "drizzle-orm";
 import cronParser from "cron-parser";
 import { google } from 'googleapis';
+import { generateReviewsXlsx } from '../server/utils/review-xlsx-generator';
 
 neonConfig.webSocketConstructor = ws;
 
@@ -21,26 +22,81 @@ const db = drizzle({ client: pool, schema });
 
 // Send an email using the caller's pre-built OAuth2 client (tokens come from the DB).
 // No Replit connector dependency.
+interface EmailAttachment {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+}
+
 interface EmailOptions {
   to: string;
   subject: string;
   body: string;
   isHtml?: boolean;
+  attachments?: EmailAttachment[];
 }
 
 function createRawEmail(options: EmailOptions): string {
-  const { to, subject, body, isHtml = false } = options;
-  const contentType = isHtml ? 'text/html' : 'text/plain';
+  const { to, subject, body, isHtml = false, attachments } = options;
+  const boundary = '----=_BizBuddyBoundary_' + Date.now();
 
-  const emailLines = [
-    `To: ${to}`,
-    `Subject: ${subject}`,
-    `Content-Type: ${contentType}; charset=utf-8`,
-    '',
-    body
-  ];
+  let email: string;
 
-  const email = emailLines.join('\r\n');
+  if (attachments && attachments.length > 0) {
+    const contentType = isHtml ? 'text/html' : 'text/plain';
+    const bodyBase64 = Buffer.from(body, 'utf8')
+      .toString('base64')
+      .match(/.{1,76}/g)!
+      .join('\r\n');
+
+    const headerLines = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ];
+
+    const bodyPart = [
+      `--${boundary}`,
+      `Content-Type: ${contentType}; charset=utf-8`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      bodyBase64,
+    ];
+
+    const attachmentParts = attachments.map(att => {
+      const attBase64 = att.data.toString('base64').match(/.{1,76}/g)!.join('\r\n');
+      return [
+        `--${boundary}`,
+        `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+        `Content-Transfer-Encoding: base64`,
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        ``,
+        attBase64,
+      ].join('\r\n');
+    });
+
+    email = [
+      headerLines.join('\r\n'),
+      ``,
+      bodyPart.join('\r\n'),
+      ``,
+      ...attachmentParts,
+      ``,
+      `--${boundary}--`,
+    ].join('\r\n');
+  } else {
+    const contentType = isHtml ? 'text/html' : 'text/plain';
+    const emailLines = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `Content-Type: ${contentType}; charset=utf-8`,
+      '',
+      body
+    ];
+    email = emailLines.join('\r\n');
+  }
+
   return Buffer.from(email)
     .toString('base64')
     .replace(/\+/g, '-')
@@ -364,64 +420,106 @@ async function sendScheduledReviewEmailForGroup(
       console.log(`📧 No reviews to send for group "${group.name}"`);
       return;
     }
-    
-    const emailHtml = generateReviewEmailHtml(allReviews, group.name, minStars, maxStars, allCheckedLocations);
+
     const starText = minStars === maxStars ? `${minStars} star` : `${minStars}-${maxStars} stars`;
-    
+
+    // Build a friendly date range label for the sheet
+    const now = new Date();
+    const rangeStart = new Date(now);
+    rangeStart.setDate(rangeStart.getDate() - (group.lookbackDays || 7));
+    const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+    // Deduplicate location names for the subject line
     const allLocationNames = allReviews.map(r => r.locationName).filter(Boolean) as string[];
     const uniqueLocationNames = [...new Set(allLocationNames)];
-    
     const combinedNames: string[] = [];
     const usedIndices = new Set<number>();
-    
     for (let i = 0; i < uniqueLocationNames.length; i++) {
       if (usedIndices.has(i)) continue;
-      
       const name1 = uniqueLocationNames[i];
       let baseName = name1;
-      
       for (let j = i + 1; j < uniqueLocationNames.length; j++) {
         if (usedIndices.has(j)) continue;
-        
         const name2 = uniqueLocationNames[j];
         const words1 = name1.toLowerCase().split(/\s+/);
         const words2 = name2.toLowerCase().split(/\s+/);
         const maxWords = Math.max(words1.length, words2.length);
-        
         let commonWords = 0;
         for (let k = 0; k < Math.min(words1.length, words2.length); k++) {
           if (words1[k] === words2[k]) commonWords++;
           else break;
         }
-        
         if (commonWords >= maxWords * 0.8 || commonWords >= 3) {
           usedIndices.add(j);
           const originalWords = name1.split(/\s+/);
           baseName = originalWords.slice(0, commonWords).join(' ');
         }
       }
-      
       usedIndices.add(i);
       combinedNames.push(baseName);
     }
-    
-    const locationNamesText = combinedNames.length > 0 
-      ? ` - ${combinedNames.join(', ')}`
-      : '';
-    
+    const locationNamesText = combinedNames.length > 0 ? ` - ${combinedNames.join(', ')}` : '';
     const subjectText = `${allReviews.length} new review${allReviews.length !== 1 ? 's' : ''} (${starText})${locationNamesText}`;
-    
+
     const recipients = group.recipientEmail.split(',').map(e => e.trim()).filter(Boolean);
-    
-    for (const recipient of recipients) {
-      try {
-        await sendEmail(
-          { to: recipient, subject: subjectText, body: emailHtml, isHtml: true },
-          oauth2Client,
-        );
-        console.log(`✅ Sent review email to ${recipient} for group "${group.name}"`);
-      } catch (error) {
-        console.error(`❌ Failed to send review email to ${recipient}:`, error);
+    const outputFormat = (group as any).outputFormat || 'email';
+
+    if (outputFormat === 'sheet') {
+      // Generate xlsx and send as attachment
+      console.log(`📊 Generating spreadsheet for group "${group.name}"...`);
+      const breakout = ((group as any).sheetBreakout || 'region') as 'region' | 'location' | 'none';
+      const reviewsForSheet = allReviews.map(r => ({
+        locationName: r.locationName || 'Unknown',
+        locationAddress: r.locationAddress,
+        starRating: r.starRating,
+        reviewer: r.reviewer,
+        reviewDate: r.createTime,
+        reviewText: r.comment || '',
+        responseAuthor: r.reviewReply?.author || undefined,
+        responseDate: r.reviewReply?.updateTime || undefined,
+        responseText: r.reviewReply?.comment || undefined,
+      }));
+
+      const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
+      const filename = `reviews-${group.name.toLowerCase().replace(/\s+/g, '-')}-${now.toISOString().split('T')[0]}.xlsx`;
+      const bodyText = group.customMessage
+        ? `${group.customMessage}\n\nSee the attached spreadsheet for ${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} (${starText}) from ${dateRange}.`
+        : `Please find attached your review recap for ${dateRange}.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`;
+
+      for (const recipient of recipients) {
+        try {
+          await sendEmail(
+            {
+              to: recipient,
+              subject: subjectText,
+              body: bodyText,
+              isHtml: false,
+              attachments: [{
+                filename,
+                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                data: xlsxBuffer,
+              }],
+            },
+            oauth2Client,
+          );
+          console.log(`✅ Sent review spreadsheet to ${recipient} for group "${group.name}"`);
+        } catch (error) {
+          console.error(`❌ Failed to send review spreadsheet to ${recipient}:`, error);
+        }
+      }
+    } else {
+      // Default: HTML email
+      const emailHtml = generateReviewEmailHtml(allReviews, group.name, minStars, maxStars, allCheckedLocations);
+      for (const recipient of recipients) {
+        try {
+          await sendEmail(
+            { to: recipient, subject: subjectText, body: emailHtml, isHtml: true },
+            oauth2Client,
+          );
+          console.log(`✅ Sent review email to ${recipient} for group "${group.name}"`);
+        } catch (error) {
+          console.error(`❌ Failed to send review email to ${recipient}:`, error);
+        }
       }
     }
   } catch (error) {

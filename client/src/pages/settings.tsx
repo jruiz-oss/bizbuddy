@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Save, Key, Bell, Shield, User, Palette, Settings as SettingsIcon, LogOut, BarChart3, Clock, History, MapPin, MessageSquare, Lightbulb, Star, Mail, Plus, Trash2, Edit2, Users, Share2, Send, Loader2, RefreshCw, CalendarClock, Terminal, AlertTriangle, Unlink } from "lucide-react";
+import { Save, Key, Bell, Shield, User, Palette, Settings as SettingsIcon, LogOut, BarChart3, Clock, History, MapPin, MessageSquare, Lightbulb, Star, Mail, Plus, Trash2, Edit2, Users, Share2, Send, Loader2, RefreshCw, CalendarClock, Terminal, AlertTriangle, Unlink, Sheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { useLocation, Link as WouterLink } from "wouter";
@@ -188,6 +188,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     customMessage: "",
     isEnabled: true,
     startDate: todayPhoenix,
+    outputFormat: "email" as "email" | "sheet",
+    sheetBreakout: "region" as "region" | "location" | "none",
     locationIds: [] as string[],
   });
 
@@ -217,6 +219,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         customMessage: "",
         isEnabled: true,
         startDate: new Date().toLocaleDateString("en-CA", { timeZone: "America/Phoenix" }),
+        outputFormat: "email",
+        sheetBreakout: "region",
         locationIds: [],
       });
       toast({
@@ -637,6 +641,43 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               </Select>
                             </div>
                             <div className="space-y-2">
+                              <Label>Delivery Format</Label>
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingGroup({ ...editingGroup, outputFormat: "email" } as any)}
+                                  className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${(editingGroup as any).outputFormat !== "sheet" ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"}`}
+                                  data-testid={`button-edit-group-format-email-${group.id}`}
+                                >
+                                  <Mail className="w-4 h-4" /> Email
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingGroup({ ...editingGroup, outputFormat: "sheet" } as any)}
+                                  className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${(editingGroup as any).outputFormat === "sheet" ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"}`}
+                                  data-testid={`button-edit-group-format-sheet-${group.id}`}
+                                >
+                                  <Sheet className="w-4 h-4" /> Spreadsheet
+                                </button>
+                              </div>
+                              {(editingGroup as any).outputFormat === "sheet" && (
+                                <div className="space-y-2 pt-1">
+                                  <Label className="text-sm text-muted-foreground">Break out tabs by</Label>
+                                  <Select
+                                    value={(editingGroup as any).sheetBreakout || "region"}
+                                    onValueChange={(v: "region" | "location" | "none") => setEditingGroup({ ...editingGroup, sheetBreakout: v } as any)}
+                                  >
+                                    <SelectTrigger className="w-48" data-testid={`select-edit-group-sheet-breakout-${group.id}`}><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="region">Region (AZ / MD / SF)</SelectItem>
+                                      <SelectItem value="location">Location (one tab each)</SelectItem>
+                                      <SelectItem value="none">No breakout (all in one tab)</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+                            </div>
+                            <div className="space-y-2">
                               <Label>Custom Message (shown at the top of each email)</Label>
                               <Textarea
                                 value={editingGroup.customMessage || ""}
@@ -871,7 +912,41 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Custom Message (shown at the top of each email)</Label>
+                      <Label>Delivery Format</Label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setNewGroup({ ...newGroup, outputFormat: "email" })}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${newGroup.outputFormat === "email" ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"}`}
+                          data-testid="button-new-group-format-email"
+                        >
+                          <Mail className="w-4 h-4" /> Email
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewGroup({ ...newGroup, outputFormat: "sheet" })}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium transition-colors ${newGroup.outputFormat === "sheet" ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted"}`}
+                          data-testid="button-new-group-format-sheet"
+                        >
+                          <Sheet className="w-4 h-4" /> Spreadsheet
+                        </button>
+                      </div>
+                      {newGroup.outputFormat === "sheet" && (
+                        <div className="space-y-2 pt-1">
+                          <Label className="text-sm text-muted-foreground">Break out tabs by</Label>
+                          <Select value={newGroup.sheetBreakout} onValueChange={(v: "region" | "location" | "none") => setNewGroup({ ...newGroup, sheetBreakout: v })}>
+                            <SelectTrigger className="w-48" data-testid="select-new-group-sheet-breakout"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="region">Region (AZ / MD / SF)</SelectItem>
+                              <SelectItem value="location">Location (one tab each)</SelectItem>
+                              <SelectItem value="none">No breakout (all in one tab)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Custom Message (shown at the top of each {newGroup.outputFormat === "sheet" ? "spreadsheet email" : "email"})</Label>
                       <Textarea
                         value={newGroup.customMessage}
                         onChange={(e) => setNewGroup({ ...newGroup, customMessage: e.target.value })}

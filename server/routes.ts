@@ -4468,12 +4468,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/review-email-groups", requireAuth, async (req, res) => {
     try {
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate } = req.body;
-      
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
+
       if (!name || !recipientEmail) {
         return res.status(400).json({ message: "Name and recipient email are required" });
       }
-      
+
       const group = await storage.createReviewEmailGroup({
         userId: req.session!.userId!,
         name,
@@ -4488,6 +4488,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         frequency: frequency || "weekly",
         lookbackDays: lookbackDays || 7,
         startDate: startDate || null,
+        outputFormat: outputFormat || "email",
+        sheetBreakout: sheetBreakout || "region",
       });
       
       // Set location assignments
@@ -4512,8 +4514,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Group not found" });
       }
       
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate } = req.body;
-      
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
+
       const group = await storage.updateReviewEmailGroup(id, {
         name,
         recipientEmail,
@@ -4527,6 +4529,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         frequency: frequency || "weekly",
         lookbackDays: lookbackDays || 7,
         startDate: startDate || null,
+        outputFormat: outputFormat || "email",
+        sheetBreakout: sheetBreakout || "region",
       });
       
       // Update location assignments
