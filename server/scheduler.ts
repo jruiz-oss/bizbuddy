@@ -734,7 +734,9 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const emailHtml = generateReviewEmailHtml(allReviews, group.name, minStars, maxStars, lookbackDays, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
     let subjectText: string;
-    if (allReviews.length === 0) {
+    if (group.customSubject?.trim()) {
+      subjectText = group.customSubject.trim();
+    } else if (allReviews.length === 0) {
       subjectText = `Review Summary — No New ${starText} Reviews`;
       console.log(`📧 No matching reviews for group "${group.name}", sending summary email`);
     } else {

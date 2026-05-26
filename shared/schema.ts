@@ -256,6 +256,7 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   frequency: text("frequency").notNull().default("weekly"), // "weekly" | "biweekly" | "monthly"
   lookbackDays: integer("lookback_days").notNull().default(7),
   customMessage: text("custom_message"),
+  customSubject: text("custom_subject"),
   ccEmail: text("cc_email"),
   isEnabled: boolean("is_enabled").notNull().default(true),
   startDate: text("start_date"), // YYYY-MM-DD in Phoenix time; emails won't send before this date

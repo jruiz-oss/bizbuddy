@@ -4468,7 +4468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/review-email-groups", requireAuth, async (req, res) => {
     try {
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
 
       if (!name || !recipientEmail) {
         return res.status(400).json({ message: "Name and recipient email are required" });
@@ -4484,6 +4484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minStars: minStars || 1,
         maxStars: maxStars || 3,
         customMessage: customMessage || null,
+        customSubject: customSubject || null,
         isEnabled: isEnabled !== false,
         frequency: frequency || "weekly",
         lookbackDays: lookbackDays || 7,
@@ -4514,7 +4515,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Group not found" });
       }
       
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, startDate, outputFormat, sheetBreakout } = req.body;
 
       const group = await storage.updateReviewEmailGroup(id, {
         name,
@@ -4525,6 +4526,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minStars,
         maxStars,
         customMessage: customMessage || null,
+        customSubject: customSubject || null,
         isEnabled,
         frequency: frequency || "weekly",
         lookbackDays: lookbackDays || 7,

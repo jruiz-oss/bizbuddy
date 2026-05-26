@@ -186,6 +186,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     maxStars: 3,
     lookbackDays: 7,
     customMessage: "",
+    customSubject: "",
     isEnabled: true,
     startDate: todayPhoenix,
     outputFormat: "email" as "email" | "sheet",
@@ -217,6 +218,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         maxStars: 3,
         lookbackDays: 7,
         customMessage: "",
+        customSubject: "",
         isEnabled: true,
         startDate: new Date().toLocaleDateString("en-CA", { timeZone: "America/Phoenix" }),
         outputFormat: "email",
@@ -678,6 +680,15 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               )}
                             </div>
                             <div className="space-y-2">
+                              <Label>Custom Subject Line (optional — overrides the auto-generated subject)</Label>
+                              <Input
+                                value={editingGroup.customSubject || ""}
+                                onChange={(e) => setEditingGroup({ ...editingGroup, customSubject: e.target.value })}
+                                placeholder="e.g. Weekly Review Roundup — Acme Locations"
+                                data-testid={`input-edit-group-subject-${group.id}`}
+                              />
+                            </div>
+                            <div className="space-y-2">
                               <Label>Custom Message (shown at the top of each email)</Label>
                               <Textarea
                                 value={editingGroup.customMessage || ""}
@@ -944,6 +955,15 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                           </Select>
                         </div>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Custom Subject Line (optional — overrides the auto-generated subject)</Label>
+                      <Input
+                        value={newGroup.customSubject}
+                        onChange={(e) => setNewGroup({ ...newGroup, customSubject: e.target.value })}
+                        placeholder="e.g. Weekly Review Roundup — Acme Locations"
+                        data-testid="input-new-group-subject"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Custom Message (shown at the top of each {newGroup.outputFormat === "sheet" ? "spreadsheet email" : "email"})</Label>
