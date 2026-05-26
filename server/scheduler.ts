@@ -680,7 +680,8 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
               createTime: review.createTime,
               locationName: location.name,
               locationAddress: location.address,
-              gbpLocationId: location.gbpLocationId
+              gbpLocationId: location.gbpLocationId,
+              reviewReply: review.reviewReply || undefined,
             });
           }
         }
@@ -825,7 +826,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         reviewer: r.reviewer,
         reviewDate: r.createTime,
         reviewText: r.comment || '',
-        responseAuthor: r.reviewReply?.author || undefined,
+        responseAuthor: r.reviewReply?.comment ? (r.reviewReply?.author || 'Owner') : undefined,
         responseDate: r.reviewReply?.updateTime || undefined,
         responseText: r.reviewReply?.comment || undefined,
       }));
