@@ -1,5 +1,5 @@
 import { SideNav } from "@/components/SideNav";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -64,18 +64,40 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     queryKey: ["/api/folders"],
   });
 
-  const [newGroupFolderFilter, setNewGroupFolderFilter] = useState<string>("all");
-  const [editGroupFolderFilter, setEditGroupFolderFilter] = useState<string>("all");
+  const [newGroupFolderFilter, setNewGroupFolderFilter] = useState<string[]>([]);
+  const [editGroupFolderFilter, setEditGroupFolderFilter] = useState<string[]>([]);
 
-  const { data: newGroupFolderLocations = [] } = useQuery<ClientLocation[]>({
-    queryKey: [`/api/folders/${newGroupFolderFilter}/locations`],
-    enabled: newGroupFolderFilter !== "all",
+  const newFolderQueries = useQueries({
+    queries: newGroupFolderFilter.map(folderId => ({
+      queryKey: [`/api/folders/${folderId}/locations`],
+      queryFn: () => fetch(`/api/folders/${folderId}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
+    })),
   });
 
-  const { data: editGroupFolderLocations = [] } = useQuery<ClientLocation[]>({
-    queryKey: [`/api/folders/${editGroupFolderFilter}/locations`],
-    enabled: editGroupFolderFilter !== "all",
+  const editFolderQueries = useQueries({
+    queries: editGroupFolderFilter.map(folderId => ({
+      queryKey: [`/api/folders/${folderId}/locations`],
+      queryFn: () => fetch(`/api/folders/${folderId}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
+    })),
   });
+
+  const newGroupFolderLocations: ClientLocation[] = newGroupFolderFilter.length === 0
+    ? allLocations
+    : Array.from(new Map(
+        newFolderQueries.flatMap(q => (q.data ?? []) as ClientLocation[]).map(l => [l.id, l])
+      ).values());
+
+  const editGroupFolderLocations: ClientLocation[] = editGroupFolderFilter.length === 0
+    ? allLocations
+    : Array.from(new Map(
+        editFolderQueries.flatMap(q => (q.data ?? []) as ClientLocation[]).map(l => [l.id, l])
+      ).values());
+
+  const toggleNewFolder = (folderId: string) =>
+    setNewGroupFolderFilter(prev => prev.includes(folderId) ? prev.filter(id => id !== folderId) : [...prev, folderId]);
+
+  const toggleEditFolder = (folderId: string) =>
+    setEditGroupFolderFilter(prev => prev.includes(folderId) ? prev.filter(id => id !== folderId) : [...prev, folderId]);
 
   const { data: settings, isLoading } = useQuery<UserSettings>({
     queryKey: ["/api/user/settings"],
@@ -211,15 +233,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     locationIds: [] as string[],
   });
 
-  // Group locations by client for the UI, optionally filtered by local folder
-  const filteredLocationsForNew = newGroupFolderFilter === "all"
-    ? allLocations
-    : newGroupFolderLocations;
-
-  const filteredLocationsForEdit = editGroupFolderFilter === "all"
-    ? allLocations
-    : editGroupFolderLocations;
-
+  // Group locations by client for the UI, optionally filtered by local folders
   const locationsByClient = clients.map(client => ({
     client,
     locations: allLocations.filter(loc => loc.clientId === client.id)
@@ -227,12 +241,12 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
 
   const locationsByClientForNew = clients.map(client => ({
     client,
-    locations: filteredLocationsForNew.filter(loc => loc.clientId === client.id)
+    locations: newGroupFolderLocations.filter(loc => loc.clientId === client.id)
   })).filter(group => group.locations.length > 0);
 
   const locationsByClientForEdit = clients.map(client => ({
     client,
-    locations: filteredLocationsForEdit.filter(loc => loc.clientId === client.id)
+    locations: editGroupFolderLocations.filter(loc => loc.clientId === client.id)
   })).filter(group => group.locations.length > 0);
 
   const createGroupMutation = useMutation({
@@ -736,25 +750,24 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             <div className="space-y-2">
                               <Label className="text-sm font-medium">Locations in Group</Label>
                               {locationFolders.length > 0 && (
-                                <div className="flex items-center gap-2">
-                                  <Select value={editGroupFolderFilter} onValueChange={setEditGroupFolderFilter}>
-                                    <SelectTrigger className="h-8 text-xs w-56">
-                                      <SelectValue placeholder="Filter by folder..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">All locations</SelectItem>
-                                      {locationFolders.map(folder => (
-                                        <SelectItem key={folder.id} value={folder.id}>
-                                          <span className="flex items-center gap-1.5">
-                                            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: folder.color }} />
-                                            {folder.name}
-                                          </span>
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  {editGroupFolderFilter !== "all" && (
-                                    <button className="text-xs text-muted-foreground hover:text-foreground underline" onClick={() => setEditGroupFolderFilter("all")}>Clear</button>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  {locationFolders.map(folder => {
+                                    const active = editGroupFolderFilter.includes(folder.id);
+                                    return (
+                                      <button
+                                        key={folder.id}
+                                        type="button"
+                                        onClick={() => toggleEditFolder(folder.id)}
+                                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-colors ${active ? "border-transparent text-white" : "border-border text-muted-foreground hover:text-foreground bg-transparent"}`}
+                                        style={active ? { backgroundColor: folder.color, borderColor: folder.color } : {}}
+                                      >
+                                        <span className="inline-block w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: active ? "rgba(255,255,255,0.7)" : folder.color }} />
+                                        {folder.name}
+                                      </button>
+                                    );
+                                  })}
+                                  {editGroupFolderFilter.length > 0 && (
+                                    <button type="button" className="text-xs text-muted-foreground hover:text-foreground underline ml-1" onClick={() => setEditGroupFolderFilter([])}>Clear</button>
                                   )}
                                 </div>
                               )}
@@ -793,7 +806,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                   })
                                 ) : (
                                   <div className="text-sm text-muted-foreground text-center py-4 italic">
-                                    {editGroupFolderFilter !== "all" ? "No locations in this folder." : "No locations available. Please ensure your business profiles are synced."}
+                                    {editGroupFolderFilter.length > 0 ? "No locations in the selected folders." : "No locations available. Please ensure your business profiles are synced."}
                                   </div>
                                 )}
                               </div>
@@ -829,7 +842,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                   <Send className="w-4 h-4" />
                                   <span className="ml-1 text-xs">Test</span>
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => { setEditingGroup({ ...group }); setEditGroupFolderFilter("all"); }} data-testid={`button-edit-group-${group.id}`}>
+                                <Button size="sm" variant="ghost" onClick={() => { setEditingGroup({ ...group }); setEditGroupFolderFilter([]); }} data-testid={`button-edit-group-${group.id}`}>
                                   <Edit2 className="w-4 h-4" />
                                 </Button>
                                 <Button size="sm" variant="ghost" onClick={() => deleteGroupMutation.mutate(group.id)} data-testid={`button-delete-group-${group.id}`}>
@@ -1036,25 +1049,24 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Select Locations</Label>
                       {locationFolders.length > 0 && (
-                        <div className="flex items-center gap-2">
-                          <Select value={newGroupFolderFilter} onValueChange={setNewGroupFolderFilter}>
-                            <SelectTrigger className="h-8 text-xs w-56">
-                              <SelectValue placeholder="Filter by folder..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="all">All locations</SelectItem>
-                              {locationFolders.map(folder => (
-                                <SelectItem key={folder.id} value={folder.id}>
-                                  <span className="flex items-center gap-1.5">
-                                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: folder.color }} />
-                                    {folder.name}
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {newGroupFolderFilter !== "all" && (
-                            <button className="text-xs text-muted-foreground hover:text-foreground underline" onClick={() => setNewGroupFolderFilter("all")}>Clear</button>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {locationFolders.map(folder => {
+                            const active = newGroupFolderFilter.includes(folder.id);
+                            return (
+                              <button
+                                key={folder.id}
+                                type="button"
+                                onClick={() => toggleNewFolder(folder.id)}
+                                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition-colors ${active ? "border-transparent text-white" : "border-border text-muted-foreground hover:text-foreground bg-transparent"}`}
+                                style={active ? { backgroundColor: folder.color, borderColor: folder.color } : {}}
+                              >
+                                <span className="inline-block w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: active ? "rgba(255,255,255,0.7)" : folder.color }} />
+                                {folder.name}
+                              </button>
+                            );
+                          })}
+                          {newGroupFolderFilter.length > 0 && (
+                            <button type="button" className="text-xs text-muted-foreground hover:text-foreground underline ml-1" onClick={() => setNewGroupFolderFilter([])}>Clear</button>
                           )}
                         </div>
                       )}
@@ -1089,7 +1101,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                           ))
                         ) : (
                           <div className="text-sm text-muted-foreground text-center py-4 italic">
-                            {newGroupFolderFilter !== "all" ? "No locations in this folder." : "No locations available. Please ensure your business profiles are synced."}
+                            {newGroupFolderFilter.length > 0 ? "No locations in the selected folders." : "No locations available. Please ensure your business profiles are synced."}
                           </div>
                         )}
                       </div>
