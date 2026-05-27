@@ -298,11 +298,13 @@ export default function Dashboard({
     })
     .slice(0, 3);
 
-  const nextEmail = emailGroups
+  const nextEmails = emailGroups
     .filter((g) => g.isEnabled)
     .map((g) => ({ group: g, next: computeNextEmailSend(g) }))
     .filter((x) => x.next !== null)
-    .sort((a, b) => (a.next?.getTime() || 0) - (b.next?.getTime() || 0))[0] || null;
+    .sort((a, b) => (a.next?.getTime() || 0) - (b.next?.getTime() || 0));
+
+  const nextEmail = nextEmails[0] || null;
 
   const getJobTypeLabel = (type: string) => {
     const map: Record<string, string> = {
@@ -836,15 +838,15 @@ export default function Dashboard({
                 <CardHeader className="pb-3 pt-5 px-5">
                   <div className="flex items-center justify-between">
                     <h2 className="text-[15px] font-semibold text-gray-900">Upcoming activity</h2>
-                    {(upcomingPosts.length + (nextEmail ? 1 : 0) + (userSettings?.nextLocationSyncAt ? 1 : 0)) > 0 && (
+                    {(upcomingPosts.length + nextEmails.length + (userSettings?.nextLocationSyncAt ? 1 : 0)) > 0 && (
                       <span className="text-xs text-gray-400">
-                        {upcomingPosts.length + (nextEmail ? 1 : 0) + (userSettings?.nextLocationSyncAt ? 1 : 0)} scheduled
+                        {upcomingPosts.length + nextEmails.length + (userSettings?.nextLocationSyncAt ? 1 : 0)} scheduled
                       </span>
                     )}
                   </div>
                 </CardHeader>
                 <CardContent className="px-2 pb-3 pt-0">
-                  {(upcomingPosts.length === 0 && !nextEmail && !userSettings?.nextLocationSyncAt) ? (
+                  {(upcomingPosts.length === 0 && nextEmails.length === 0 && !userSettings?.nextLocationSyncAt) ? (
                     <div className="px-3 py-6 text-sm text-gray-500 flex items-center gap-2 justify-center">
                       <CalendarClock className="w-4 h-4 text-gray-400" />
                       Nothing scheduled.
@@ -872,18 +874,19 @@ export default function Dashboard({
                           />
                         );
                       })}
-                      {nextEmail && (
+                      {nextEmails.map((emailItem) => (
                         <UpcomingRow
+                          key={emailItem.group.id}
                           icon={<Mail className="w-3.5 h-3.5" />}
                           tone="purple"
                           kicker="Review email"
-                          title={nextEmail.group.name || "Review summary"}
-                          when={nextEmail.next}
-                          sub={nextEmail.group.recipients ? `to ${nextEmail.group.recipients}` : null}
-                          onClick={() => setSelectedUpcoming({ type: "email", data: nextEmail })}
-                          testId={`upcoming-email-${nextEmail.group.id}`}
+                          title={emailItem.group.name || "Review summary"}
+                          when={emailItem.next}
+                          sub={emailItem.group.recipients ? `to ${emailItem.group.recipients}` : null}
+                          onClick={() => setSelectedUpcoming({ type: "email", data: emailItem })}
+                          testId={`upcoming-email-${emailItem.group.id}`}
                         />
-                      )}
+                      ))}
                       {userSettings?.nextLocationSyncAt && (
                         <UpcomingRow
                           icon={<RefreshCw className="w-3.5 h-3.5" />}
