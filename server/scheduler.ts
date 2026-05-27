@@ -844,7 +844,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     // For sheet format, use a short plain-text body; otherwise use the HTML email
     const emailBody = outputFormat === 'sheet' && xlsxAttachments
       ? (group.customMessage
-          ? `${group.customMessage}\n\nSee the attached spreadsheet for ${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} (${starText}).`
+          ? `${group.customMessage}`
           : `Please find attached your review recap for the past ${lookbackDays} days.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
       : emailHtml;
     const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
