@@ -63,6 +63,7 @@ export interface IStorage {
   
   // Activity Log
   getActivityLogsByClientId(clientId: string, limit?: number): Promise<ActivityLog[]>;
+  getActivityLogById(id: string): Promise<ActivityLog | undefined>;
   createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
   deleteActivityLog(id: string): Promise<ActivityLog | undefined>;
   bulkDeleteActivityLogs(ids: string[]): Promise<number>;
@@ -416,6 +417,11 @@ export class DatabaseStorage implements IStorage {
   async createActivityLog(insertLog: InsertActivityLog): Promise<ActivityLog> {
     const [log] = await db.insert(activityLog).values(insertLog).returning();
     return log;
+  }
+
+  async getActivityLogById(id: string): Promise<ActivityLog | undefined> {
+    const [entry] = await db.select().from(activityLog).where(eq(activityLog.id, id)).limit(1);
+    return entry;
   }
 
   async deleteActivityLog(id: string): Promise<ActivityLog | undefined> {

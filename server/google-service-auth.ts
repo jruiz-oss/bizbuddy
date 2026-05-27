@@ -686,6 +686,75 @@ class GoogleOAuthAuth {
     }
   }
 
+  // Revert fields that Google changed back to their original (pre-change) values.
+  // The activityLog stores changes as { field: 'name'|'phone'|'website'|'description'|'address', old, new }.
+  // This method maps those back to the GBP API field names and PATCHes the old values.
+  // Note: 'name' (business title) changes go into a Google review queue and may not be immediate.
+  // Note: 'address' changes are not supported here — address edits require structured fields.
+  async revertLocationInfoChanges(locationName: string, changes: Array<{ field: string; old: string; new: string }>) {
+    if (!this.isAuthenticated()) {
+      throw new Error('User not authenticated. Please log in first.');
+    }
+
+    const updateFields: string[] = [];
+    const requestBody: any = {};
+    const skippedFields: string[] = [];
+
+    for (const change of changes) {
+      const oldValue = change.old;
+      if (!oldValue) continue;
+
+      switch (change.field) {
+        case 'name':
+          // Business name maps to GBP "title" field (not "name" which is the resource path)
+          updateFields.push('title');
+          requestBody.title = oldValue;
+          break;
+        case 'phone':
+          updateFields.push('phoneNumbers');
+          requestBody.phoneNumbers = { primaryPhone: oldValue };
+          break;
+        case 'website':
+          updateFields.push('websiteUri');
+          requestBody.websiteUri = oldValue;
+          break;
+        case 'description':
+          updateFields.push('profile.description');
+          requestBody.profile = { ...(requestBody.profile ?? {}), description: oldValue };
+          break;
+        case 'address':
+          // Address is a structured object — we only have the old string, can't safely revert
+          skippedFields.push('address');
+          break;
+        default:
+          skippedFields.push(change.field);
+      }
+    }
+
+    if (updateFields.length === 0) {
+      return { success: true, skipped: true, skippedFields, message: 'No revertible fields (address changes must be done manually)' };
+    }
+
+    const updateMask = updateFields.join(',');
+    console.log(`↩️ Reverting location info for: ${locationName} — fields: ${updateMask}`);
+
+    const response = await this.mybusinessbusinessinformation.locations.patch({
+      name: locationName,
+      updateMask,
+      requestBody,
+    });
+
+    console.log('✅ Location info reverted successfully');
+    return {
+      success: true,
+      data: response.data,
+      skippedFields,
+      message: skippedFields.length > 0
+        ? `Reverted ${updateFields.length} field(s). Note: address changes must be fixed manually.`
+        : `Reverted ${updateFields.length} field(s) successfully.`,
+    };
+  }
+
   // Update social media profile URLs for a location via Google Business Profile API.
   // Social media links are stored as URL *attributes* in the mybusinessbusinessinformation v1 API,
   // NOT as a top-level "socialMedia" field on the location resource.

@@ -1376,6 +1376,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Revert a location_info_changed activity — pushes old values back to GBP and updates local DB
+  app.post("/api/activity-log/:id/revert-location-info", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const entry = await storage.getActivityLogById(id);
+      if (!entry) {
+        return res.status(404).json({ message: "Activity log entry not found" });
+      }
+      if (entry.action !== "location_info_changed") {
+        return res.status(400).json({ message: "This entry is not a location_info_changed event" });
+      }
+
+      const changes: Array<{ field: string; old: string; new: string }> = (entry.payloadJson as any)?.changes ?? [];
+      if (changes.length === 0) {
+        return res.status(400).json({ message: "No changes found in this activity log entry" });
+      }
+
+      const location = entry.clientLocationId ? await storage.getLocation(entry.clientLocationId) : null;
+      if (!location?.gbpLocationId) {
+        return res.status(404).json({ message: "Location or GBP ID not found" });
+      }
+
+      const { googleOAuthAuth } = await import("./google-service-auth");
+      if (!googleOAuthAuth.isAuthenticated()) {
+        return res.status(401).json({ message: "Not authenticated with Google. Please log in." });
+      }
+
+      // Push old values back to GBP
+      const gbpResult = await googleOAuthAuth.revertLocationInfoChanges(location.gbpLocationId, changes);
+
+      // Update local DB with the old values for each field we successfully reverted
+      const localUpdates: Record<string, string> = {};
+      for (const change of changes) {
+        if (change.field === 'address') continue; // address can't be reverted via string
+        if (['name', 'phone', 'website', 'description'].includes(change.field)) {
+          localUpdates[change.field] = change.old;
+        }
+      }
+      if (Object.keys(localUpdates).length > 0) {
+        await storage.updateLocation(entry.clientLocationId!, localUpdates as any);
+      }
+
+      // Log the revert action
+      await storage.createActivityLog({
+        userId: entry.userId ?? undefined,
+        clientId: entry.clientId ?? undefined,
+        clientLocationId: entry.clientLocationId ?? undefined,
+        action: "location_info_changed",
+        payloadJson: {
+          changes: changes.map(c => ({ field: c.field, old: c.new, new: c.old })),
+          revertedFrom: id,
+        },
+      });
+
+      console.log(`↩️ Reverted location info for ${location.name} (${entry.clientLocationId})`);
+      res.json({ success: true, message: gbpResult.message, skippedFields: gbpResult.skippedFields ?? [] });
+    } catch (error: any) {
+      console.error("Error reverting location info:", error);
+      res.status(500).json({ message: error.message || "Failed to revert location info" });
+    }
+  });
+
   // Bulk delete activity log entries
   app.delete("/api/activity-log/bulk", async (req, res) => {
     try {

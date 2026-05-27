@@ -144,6 +144,25 @@ export default function Dashboard({
     e.stopPropagation();
     dismissMutation.mutate({ type: "activity", id });
   };
+
+  const revertLocationInfoMutation = useMutation({
+    mutationFn: async (activityId: string) => {
+      const r = await fetch(`/api/activity-log/${activityId}/revert-location-info`, { method: "POST" });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.message || "Failed to revert");
+      }
+      return r.json() as Promise<{ success: boolean; message: string; skippedFields: string[] }>;
+    },
+    onSuccess: (data) => {
+      toast({ title: "Reverted successfully", description: data.message });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity-log"] });
+      setSelectedActivity(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Revert failed", description: err.message, variant: "destructive" });
+    },
+  });
   const [selectedUpcoming, setSelectedUpcoming] = useState<
     | { type: "post"; job: any }
     | { type: "email"; data: any }
@@ -1410,6 +1429,32 @@ export default function Dashboard({
                         <p className="text-xs text-muted-foreground mt-2">
                           Detected during Google sync. The database has been updated to match Google.
                         </p>
+                        {(() => {
+                          const changes: any[] = selectedActivity.payloadJson?.changes ?? [];
+                          const revertableChanges = changes.filter((c: any) => c.field !== 'address' && c.old);
+                          const hasAddress = changes.some((c: any) => c.field === 'address');
+                          if (revertableChanges.length === 0 && !hasAddress) return null;
+                          return (
+                            <div className="mt-3 pt-3 border-t border-amber-200">
+                              {revertableChanges.length > 0 && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-amber-400 text-amber-800 hover:bg-amber-50 w-full"
+                                  disabled={revertLocationInfoMutation.isPending}
+                                  onClick={() => revertLocationInfoMutation.mutate(selectedActivity.id)}
+                                >
+                                  {revertLocationInfoMutation.isPending ? "Reverting…" : "↩ Revert to Original"}
+                                </Button>
+                              )}
+                              {hasAddress && (
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  Note: address changes must be corrected manually in the location editor.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : selectedActivity.action === "post_created_in_app" ? (
                       activityJobLoading ? (
