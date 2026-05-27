@@ -67,31 +67,34 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
   const [newGroupFolderFilter, setNewGroupFolderFilter] = useState<string[]>([]);
   const [editGroupFolderFilter, setEditGroupFolderFilter] = useState<string[]>([]);
 
-  const newFolderQueries = useQueries({
-    queries: newGroupFolderFilter.map(folderId => ({
-      queryKey: [`/api/folders/${folderId}/locations`],
-      queryFn: () => fetch(`/api/folders/${folderId}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
+  // Load locations for ALL local folders upfront so the picker can group by folder
+  const allFolderLocationQueries = useQueries({
+    queries: locationFolders.map(folder => ({
+      queryKey: [`/api/folders/${folder.id}/locations`],
+      queryFn: () => fetch(`/api/folders/${folder.id}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
     })),
   });
 
-  const editFolderQueries = useQueries({
-    queries: editGroupFolderFilter.map(folderId => ({
-      queryKey: [`/api/folders/${folderId}/locations`],
-      queryFn: () => fetch(`/api/folders/${folderId}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
-    })),
-  });
+  // Group by local folder for display in pickers (filter by active folder chips when set)
+  const locationsByFolderForNew = locationFolders
+    .map((folder, i) => ({
+      folder,
+      locations: (allFolderLocationQueries[i]?.data ?? []) as ClientLocation[],
+    }))
+    .filter(({ folder, locations }) => {
+      if (newGroupFolderFilter.length > 0 && !newGroupFolderFilter.includes(folder.id)) return false;
+      return locations.length > 0;
+    });
 
-  const newGroupFolderLocations: ClientLocation[] = newGroupFolderFilter.length === 0
-    ? allLocations
-    : Array.from(new Map(
-        newFolderQueries.flatMap(q => (q.data ?? []) as ClientLocation[]).map(l => [l.id, l])
-      ).values());
-
-  const editGroupFolderLocations: ClientLocation[] = editGroupFolderFilter.length === 0
-    ? allLocations
-    : Array.from(new Map(
-        editFolderQueries.flatMap(q => (q.data ?? []) as ClientLocation[]).map(l => [l.id, l])
-      ).values());
+  const locationsByFolderForEdit = locationFolders
+    .map((folder, i) => ({
+      folder,
+      locations: (allFolderLocationQueries[i]?.data ?? []) as ClientLocation[],
+    }))
+    .filter(({ folder, locations }) => {
+      if (editGroupFolderFilter.length > 0 && !editGroupFolderFilter.includes(folder.id)) return false;
+      return locations.length > 0;
+    });
 
   const toggleNewFolder = (folderId: string) =>
     setNewGroupFolderFilter(prev => prev.includes(folderId) ? prev.filter(id => id !== folderId) : [...prev, folderId]);
@@ -233,20 +236,10 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     locationIds: [] as string[],
   });
 
-  // Group locations by client for the UI, optionally filtered by local folders
+  // Group locations by client for the UI (used in other parts of the page)
   const locationsByClient = clients.map(client => ({
     client,
     locations: allLocations.filter(loc => loc.clientId === client.id)
-  })).filter(group => group.locations.length > 0);
-
-  const locationsByClientForNew = clients.map(client => ({
-    client,
-    locations: newGroupFolderLocations.filter(loc => loc.clientId === client.id)
-  })).filter(group => group.locations.length > 0);
-
-  const locationsByClientForEdit = clients.map(client => ({
-    client,
-    locations: editGroupFolderLocations.filter(loc => loc.clientId === client.id)
   })).filter(group => group.locations.length > 0);
 
   const createGroupMutation = useMutation({
@@ -368,11 +361,21 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     const clientLocations = allLocations.filter(loc => loc.clientId === clientId);
     const clientLocationIds = clientLocations.map(loc => loc.id);
     const allSelected = clientLocationIds.every(id => currentIds.includes(id));
-    
+
     if (allSelected) {
       setter(currentIds.filter(id => !clientLocationIds.includes(id)));
     } else {
       setter([...new Set([...currentIds, ...clientLocationIds])]);
+    }
+  };
+
+  const toggleAllLocationsForFolder = (folderLocations: ClientLocation[], currentIds: string[], setter: (ids: string[]) => void) => {
+    const folderLocationIds = folderLocations.map(loc => loc.id);
+    const allSelected = folderLocationIds.every(id => currentIds.includes(id));
+    if (allSelected) {
+      setter(currentIds.filter(id => !folderLocationIds.includes(id)));
+    } else {
+      setter([...new Set([...currentIds, ...folderLocationIds])]);
     }
   };
 
@@ -772,20 +775,21 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                 </div>
                               )}
                               <div className="border rounded-lg p-3 max-h-64 overflow-y-auto space-y-3 bg-white dark:bg-gray-950">
-                                {locationsByClientForEdit.length > 0 ? (
-                                  locationsByClientForEdit.map(({ client, locations }) => {
+                                {locationsByFolderForEdit.length > 0 ? (
+                                  locationsByFolderForEdit.map(({ folder, locations }) => {
                                     const groupLocationIds = editingGroup.locationIds || [];
                                     const isAllSelected = locations.every(loc => groupLocationIds.includes(loc.id));
                                     return (
-                                      <div key={client.id} className="space-y-1">
+                                      <div key={folder.id} className="space-y-1">
                                         <div className="flex items-center gap-2 font-medium text-sm">
                                           <Checkbox
-                                            id={`edit-client-all-${client.id}`}
+                                            id={`edit-folder-all-${folder.id}`}
                                             checked={isAllSelected}
-                                            onCheckedChange={() => toggleAllLocationsForClient(client.id, groupLocationIds, (ids) => setEditingGroup({ ...editingGroup, locationIds: ids }))}
-                                            data-testid={`checkbox-edit-client-all-${client.id}`}
+                                            onCheckedChange={() => toggleAllLocationsForFolder(locations, groupLocationIds, (ids) => setEditingGroup({ ...editingGroup, locationIds: ids }))}
+                                            data-testid={`checkbox-edit-folder-all-${folder.id}`}
                                           />
-                                          <Label htmlFor={`edit-client-all-${client.id}`} className="cursor-pointer">{client.name}</Label>
+                                          <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: folder.color }} />
+                                          <Label htmlFor={`edit-folder-all-${folder.id}`} className="cursor-pointer">{folder.name}</Label>
                                           <span className="text-xs text-muted-foreground">({locations.filter(loc => groupLocationIds.includes(loc.id)).length}/{locations.length})</span>
                                         </div>
                                         <div className="ml-6 space-y-1">
@@ -1071,17 +1075,18 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                         </div>
                       )}
                       <div className="border rounded-lg p-3 max-h-64 overflow-y-auto space-y-3 bg-white dark:bg-gray-950">
-                        {locationsByClientForNew.length > 0 ? (
-                          locationsByClientForNew.map(({ client, locations }) => (
-                            <div key={client.id} className="space-y-1">
+                        {locationsByFolderForNew.length > 0 ? (
+                          locationsByFolderForNew.map(({ folder, locations }) => (
+                            <div key={folder.id} className="space-y-1">
                               <div className="flex items-center gap-2 font-medium text-sm">
                                 <Checkbox
-                                  id={`new-client-all-${client.id}`}
+                                  id={`new-folder-all-${folder.id}`}
                                   checked={locations.every(loc => newGroup.locationIds.includes(loc.id))}
-                                  onCheckedChange={() => toggleAllLocationsForClient(client.id, newGroup.locationIds, (ids) => setNewGroup({ ...newGroup, locationIds: ids }))}
-                                  data-testid={`checkbox-new-client-all-${client.id}`}
+                                  onCheckedChange={() => toggleAllLocationsForFolder(locations, newGroup.locationIds, (ids) => setNewGroup({ ...newGroup, locationIds: ids }))}
+                                  data-testid={`checkbox-new-folder-all-${folder.id}`}
                                 />
-                                <Label htmlFor={`new-client-all-${client.id}`} className="cursor-pointer">{client.name}</Label>
+                                <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: folder.color }} />
+                                <Label htmlFor={`new-folder-all-${folder.id}`} className="cursor-pointer">{folder.name}</Label>
                                 <span className="text-xs text-muted-foreground">({locations.filter(loc => newGroup.locationIds.includes(loc.id)).length}/{locations.length})</span>
                               </div>
                               <div className="ml-6 space-y-1">
