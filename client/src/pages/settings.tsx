@@ -60,6 +60,23 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     queryKey: ["/api/locations/all"],
   });
 
+  const { data: locationFolders = [] } = useQuery<{ id: string; name: string; color: string }[]>({
+    queryKey: ["/api/folders"],
+  });
+
+  const [newGroupFolderFilter, setNewGroupFolderFilter] = useState<string>("all");
+  const [editGroupFolderFilter, setEditGroupFolderFilter] = useState<string>("all");
+
+  const { data: newGroupFolderLocations = [] } = useQuery<ClientLocation[]>({
+    queryKey: [`/api/folders/${newGroupFolderFilter}/locations`],
+    enabled: newGroupFolderFilter !== "all",
+  });
+
+  const { data: editGroupFolderLocations = [] } = useQuery<ClientLocation[]>({
+    queryKey: [`/api/folders/${editGroupFolderFilter}/locations`],
+    enabled: editGroupFolderFilter !== "all",
+  });
+
   const { data: settings, isLoading } = useQuery<UserSettings>({
     queryKey: ["/api/user/settings"],
   });
@@ -194,10 +211,28 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     locationIds: [] as string[],
   });
 
-  // Group locations by client for the UI
+  // Group locations by client for the UI, optionally filtered by local folder
+  const filteredLocationsForNew = newGroupFolderFilter === "all"
+    ? allLocations
+    : newGroupFolderLocations;
+
+  const filteredLocationsForEdit = editGroupFolderFilter === "all"
+    ? allLocations
+    : editGroupFolderLocations;
+
   const locationsByClient = clients.map(client => ({
     client,
     locations: allLocations.filter(loc => loc.clientId === client.id)
+  })).filter(group => group.locations.length > 0);
+
+  const locationsByClientForNew = clients.map(client => ({
+    client,
+    locations: filteredLocationsForNew.filter(loc => loc.clientId === client.id)
+  })).filter(group => group.locations.length > 0);
+
+  const locationsByClientForEdit = clients.map(client => ({
+    client,
+    locations: filteredLocationsForEdit.filter(loc => loc.clientId === client.id)
   })).filter(group => group.locations.length > 0);
 
   const createGroupMutation = useMutation({
@@ -700,9 +735,32 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             </div>
                             <div className="space-y-2">
                               <Label className="text-sm font-medium">Locations in Group</Label>
+                              {locationFolders.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                  <Select value={editGroupFolderFilter} onValueChange={setEditGroupFolderFilter}>
+                                    <SelectTrigger className="h-8 text-xs w-56">
+                                      <SelectValue placeholder="Filter by folder..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">All locations</SelectItem>
+                                      {locationFolders.map(folder => (
+                                        <SelectItem key={folder.id} value={folder.id}>
+                                          <span className="flex items-center gap-1.5">
+                                            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: folder.color }} />
+                                            {folder.name}
+                                          </span>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {editGroupFolderFilter !== "all" && (
+                                    <button className="text-xs text-muted-foreground hover:text-foreground underline" onClick={() => setEditGroupFolderFilter("all")}>Clear</button>
+                                  )}
+                                </div>
+                              )}
                               <div className="border rounded-lg p-3 max-h-64 overflow-y-auto space-y-3 bg-white dark:bg-gray-950">
-                                {locationsByClient.length > 0 ? (
-                                  locationsByClient.map(({ client, locations }) => {
+                                {locationsByClientForEdit.length > 0 ? (
+                                  locationsByClientForEdit.map(({ client, locations }) => {
                                     const groupLocationIds = editingGroup.locationIds || [];
                                     const isAllSelected = locations.every(loc => groupLocationIds.includes(loc.id));
                                     return (
@@ -735,7 +793,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                   })
                                 ) : (
                                   <div className="text-sm text-muted-foreground text-center py-4 italic">
-                                    No locations available. Please ensure your business profiles are synced.
+                                    {editGroupFolderFilter !== "all" ? "No locations in this folder." : "No locations available. Please ensure your business profiles are synced."}
                                   </div>
                                 )}
                               </div>
@@ -771,7 +829,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                   <Send className="w-4 h-4" />
                                   <span className="ml-1 text-xs">Test</span>
                                 </Button>
-                                <Button size="sm" variant="ghost" onClick={() => setEditingGroup({ ...group })} data-testid={`button-edit-group-${group.id}`}>
+                                <Button size="sm" variant="ghost" onClick={() => { setEditingGroup({ ...group }); setEditGroupFolderFilter("all"); }} data-testid={`button-edit-group-${group.id}`}>
                                   <Edit2 className="w-4 h-4" />
                                 </Button>
                                 <Button size="sm" variant="ghost" onClick={() => deleteGroupMutation.mutate(group.id)} data-testid={`button-delete-group-${group.id}`}>
@@ -977,9 +1035,32 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     </div>
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Select Locations</Label>
+                      {locationFolders.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <Select value={newGroupFolderFilter} onValueChange={setNewGroupFolderFilter}>
+                            <SelectTrigger className="h-8 text-xs w-56">
+                              <SelectValue placeholder="Filter by folder..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">All locations</SelectItem>
+                              {locationFolders.map(folder => (
+                                <SelectItem key={folder.id} value={folder.id}>
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: folder.color }} />
+                                    {folder.name}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {newGroupFolderFilter !== "all" && (
+                            <button className="text-xs text-muted-foreground hover:text-foreground underline" onClick={() => setNewGroupFolderFilter("all")}>Clear</button>
+                          )}
+                        </div>
+                      )}
                       <div className="border rounded-lg p-3 max-h-64 overflow-y-auto space-y-3 bg-white dark:bg-gray-950">
-                        {locationsByClient.length > 0 ? (
-                          locationsByClient.map(({ client, locations }) => (
+                        {locationsByClientForNew.length > 0 ? (
+                          locationsByClientForNew.map(({ client, locations }) => (
                             <div key={client.id} className="space-y-1">
                               <div className="flex items-center gap-2 font-medium text-sm">
                                 <Checkbox
@@ -1008,7 +1089,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                           ))
                         ) : (
                           <div className="text-sm text-muted-foreground text-center py-4 italic">
-                            No locations available. Please ensure your business profiles are synced.
+                            {newGroupFolderFilter !== "all" ? "No locations in this folder." : "No locations available. Please ensure your business profiles are synced."}
                           </div>
                         )}
                       </div>
