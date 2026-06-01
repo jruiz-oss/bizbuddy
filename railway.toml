@@ -1,9 +1,13 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install && npm run build:server"
+buildCommand = "npm install && npm run build:server && npm run build:migrate"
 
 [deploy]
-startCommand = "npm run start"
+# Migrations run before the server boots. `migrate` only applies reviewed SQL
+# files committed under ./migrations and skips anything already applied, so this
+# is safe to run on every deploy/restart. IMPORTANT: run `npm run db:baseline`
+# once against the production DB before the first deploy of this change.
+startCommand = "node dist/migrate.js && npm run start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
