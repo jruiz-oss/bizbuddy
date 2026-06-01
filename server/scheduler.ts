@@ -732,11 +732,9 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
 
     // Generate email HTML with all checked locations (even if no reviews)
-    const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000;
-    const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
-    const midnightTodayPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
-    const _endDate = new Date((midnightTodayPhoenixMs - 86400000) + PHOENIX_OFFSET_MS);
-    const _startDate = new Date((midnightTodayPhoenixMs - lookbackDays * 86400000) + PHOENIX_OFFSET_MS);
+    const _midnightTodayPhoenixMs = Math.floor((Date.now() - PHOENIX_OFFSET_MS) / 86400000) * 86400000;
+    const _endDate = new Date((_midnightTodayPhoenixMs - 86400000) + PHOENIX_OFFSET_MS);
+    const _startDate = new Date((_midnightTodayPhoenixMs - lookbackDays * 86400000) + PHOENIX_OFFSET_MS);
     const schedulerDateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
     const emailHtml = generateReviewEmailHtmlTemplate(allReviews, group.name, minStars, maxStars, schedulerDateRange, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
