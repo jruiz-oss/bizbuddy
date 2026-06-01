@@ -4528,9 +4528,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const starText = (minStars ?? 1) === (maxStars ?? 5)
         ? `${minStars ?? 1} star`
         : `${minStars ?? 1}-${maxStars ?? 5} stars`;
-      const subject = reviews.length > 0
-        ? `${reviews.length} Review${reviews.length !== 1 ? 's' : ''} — ${starText}${clientName ? ` — ${clientName}` : ''}`
-        : `Review Summary — ${starText}`;
+
+      // Build location names for subject (same logic as automated emails)
+      let subject: string;
+      if (reviews.length === 0) {
+        subject = `Review Summary — No New ${starText} Reviews`;
+      } else {
+        const uniqueNames: string[] = Array.from(new Set(
+          (reviews as any[]).map((r: any) => r.locationName).filter(Boolean)
+        ));
+        const combinedNames: string[] = [];
+        const used = new Set<number>();
+        for (let i = 0; i < uniqueNames.length; i++) {
+          if (used.has(i)) continue;
+          const name1 = uniqueNames[i];
+          let baseName = name1;
+          for (let j = i + 1; j < uniqueNames.length; j++) {
+            if (used.has(j)) continue;
+            const w1 = name1.toLowerCase().split(/\s+/);
+            const w2 = uniqueNames[j].toLowerCase().split(/\s+/);
+            let common = 0;
+            for (let k = 0; k < Math.min(w1.length, w2.length); k++) {
+              if (w1[k] === w2[k]) common++; else break;
+            }
+            if (common >= Math.max(w1.length, w2.length) * 0.8 || common >= 3) {
+              used.add(j);
+              baseName = name1.split(/\s+/).slice(0, common).join(' ');
+            }
+          }
+          used.add(i);
+          combinedNames.push(baseName);
+        }
+        const locationPart = combinedNames.length > 0 ? ` - ${combinedNames.join(', ')}` : '';
+        subject = `${reviews.length} New Review${reviews.length !== 1 ? 's' : ''} — ${starText}${locationPart}`;
+      }
 
       // Load logo for inline attachment (same as automated emails)
       const logoPath = path.join(process.cwd(), 'client', 'src', 'assets', 'commit-logo.png');
