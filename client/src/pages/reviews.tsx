@@ -68,6 +68,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
   const [maxStars, setMaxStars] = useState<number>(3);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
+  const [ccEmail, setCcEmail] = useState("");
   const [customMessage, setCustomMessage] = useState("");
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -101,6 +102,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
     mutationFn: async () => {
       const response = await apiRequest("POST", "/api/reviews/send-email", {
         to: recipientEmail,
+        cc: ccEmail || undefined,
         reviews,
         minStars,
         maxStars,
@@ -119,6 +121,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
       });
       setEmailModalOpen(false);
       setRecipientEmail("");
+      setCcEmail("");
       setCustomMessage("");
     },
     onError: (error: any) => {
@@ -678,6 +681,17 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
                 data-testid="input-recipient-email"
               />
               <p className="text-xs text-muted-foreground">Separate multiple emails with commas</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cc-email">CC (optional)</Label>
+              <Input
+                id="cc-email"
+                type="text"
+                placeholder="cc@example.com, another@example.com"
+                value={ccEmail}
+                onChange={(e) => setCcEmail(e.target.value)}
+                data-testid="input-cc-email"
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="custom-message">Message (optional)</Label>

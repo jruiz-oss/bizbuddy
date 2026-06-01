@@ -4487,7 +4487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send manual reviews email — same template as automated, with Copy/Email buttons and optional custom message
   app.post("/api/reviews/send-email", requireAuth, async (req, res) => {
     try {
-      const { to, reviews, minStars, maxStars, startDate, endDate, customMessage, clientName } = req.body;
+      const { to, cc, reviews, minStars, maxStars, startDate, endDate, customMessage, clientName } = req.body;
       if (!to || !reviews || !Array.isArray(reviews)) {
         return res.status(400).json({ success: false, error: "Missing required fields: to, reviews" });
       }
@@ -4573,7 +4573,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let lastResult: any = { success: true };
       for (const recipient of recipients) {
         lastResult = await sendEmail(
-          { to: recipient, subject, body: emailHtml, isHtml: true, inlineImages },
+          { to: recipient, cc: cc || undefined, subject, body: emailHtml, isHtml: true, inlineImages },
           { accessToken: user.accessToken, refreshToken: user.refreshToken ?? null, userId: user.id }
         );
         if (!lastResult.success) break;
