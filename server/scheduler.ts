@@ -833,7 +833,10 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         responseText: r.reviewReply?.comment || undefined,
       }));
       const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
-      const filename = `reviews-${group.name.toLowerCase().replace(/\s+/g, '-')}-${nowDate.toISOString().split('T')[0]}.xlsx`;
+      // Filename: custom sheet name (falls back to group name) + dynamic date range.
+      const sheetBaseName = ((group as any).sheetName?.trim()) || group.name;
+      const slug = (s: string) => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
+      const filename = `${slug(sheetBaseName)}-${slug(dateRange)}.xlsx`;
       xlsxAttachments = [{
         filename,
         mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

@@ -233,6 +233,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     startDate: todayPhoenix,
     outputFormat: "email" as "email" | "sheet",
     sheetBreakout: "region" as "region" | "location" | "none",
+    sheetName: "",
     locationIds: [] as string[],
   });
 
@@ -265,6 +266,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         startDate: new Date().toLocaleDateString("en-CA", { timeZone: "America/Phoenix" }),
         outputFormat: "email",
         sheetBreakout: "region",
+        sheetName: "",
         locationIds: [],
       });
       toast({
@@ -728,6 +730,14 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                       <SelectItem value="none">No breakout (all in one tab)</SelectItem>
                                     </SelectContent>
                                   </Select>
+                                  <Label className="text-sm text-muted-foreground pt-1">Spreadsheet name</Label>
+                                  <Input
+                                    value={(editingGroup as any).sheetName || ""}
+                                    onChange={(e) => setEditingGroup({ ...editingGroup, sheetName: e.target.value } as any)}
+                                    placeholder={editingGroup.name || "Review recap"}
+                                    data-testid={`input-edit-group-sheet-name-${group.id}`}
+                                  />
+                                  <p className="text-xs text-muted-foreground">The date range is added automatically — e.g. "{((editingGroup as any).sheetName?.trim()) || editingGroup.name || "Review recap"} – May 25 – Jun 1, 2026". Leave blank to use the group name.</p>
                                 </div>
                               )}
                             </div>
@@ -1028,6 +1038,14 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               <SelectItem value="none">No breakout (all in one tab)</SelectItem>
                             </SelectContent>
                           </Select>
+                          <Label className="text-sm text-muted-foreground pt-1">Spreadsheet name</Label>
+                          <Input
+                            value={(newGroup as any).sheetName || ""}
+                            onChange={(e) => setNewGroup({ ...newGroup, sheetName: e.target.value } as any)}
+                            placeholder={newGroup.name || "Review recap"}
+                            data-testid="input-new-group-sheet-name"
+                          />
+                          <p className="text-xs text-muted-foreground">The date range is added automatically — e.g. "{((newGroup as any).sheetName?.trim()) || newGroup.name || "Review recap"} – May 25 – Jun 1, 2026". Leave blank to use the group name.</p>
                         </div>
                       )}
                     </div>

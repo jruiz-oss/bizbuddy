@@ -370,9 +370,16 @@ async function sendScheduledReviewEmailForGroup(
     const maxStars = group.maxStars;
     const allCheckedLocations: { name: string; address?: string; reviewCount: number }[] = [];
     
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    
+    // Lookback window in CALENDAR days, excluding today (Phoenix time, UTC-7, no DST)
+    // so the boundary is consistent regardless of the server's timezone.
+    // Mirrors the logic in server/scheduler.ts.
+    const lookbackDays = group.lookbackDays || 7;
+    const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC-7 in ms
+    const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
+    const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
+    const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
+    const periodStart = new Date(today.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+
     for (const location of locations) {
       let matchingReviewCount = 0;
       try {
@@ -391,7 +398,8 @@ async function sendScheduledReviewEmailForGroup(
           
           if (starRating >= minStars && starRating <= maxStars) {
             const reviewDate = new Date(review.createTime);
-            if (reviewDate >= weekAgo) {
+            // Exclude today: window is [periodStart, today)
+            if (reviewDate >= periodStart && reviewDate < today) {
               matchingReviewCount++;
               allReviews.push({
                 reviewer: review.reviewer?.displayName || 'Anonymous',
@@ -481,7 +489,10 @@ async function sendScheduledReviewEmailForGroup(
       }));
 
       const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
-      const filename = `reviews-${group.name.toLowerCase().replace(/\s+/g, '-')}-${now.toISOString().split('T')[0]}.xlsx`;
+      // Filename: custom sheet name (falls back to group name) + dynamic date range.
+      const sheetBaseName = ((group as any).sheetName?.trim()) || group.name;
+      const slug = (s: string) => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
+      const filename = `${slug(sheetBaseName)}-${slug(dateRange)}.xlsx`;
       const bodyText = group.customMessage
         ? `${group.customMessage}\n\nSee the attached spreadsheet for ${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} (${starText}) from ${dateRange}.`
         : `Please find attached your review recap for ${dateRange}.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`;
