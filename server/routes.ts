@@ -4569,15 +4569,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? [{ cid: 'commit-logo', path: logoPath, mimeType: 'image/png' as const }]
         : [];
 
-      const recipients = (to as string).split(',').map((e: string) => e.trim()).filter(Boolean);
-      let lastResult: any = { success: true };
-      for (const recipient of recipients) {
-        lastResult = await sendEmail(
-          { to: recipient, cc: cc || undefined, subject, body: emailHtml, isHtml: true, inlineImages },
-          { accessToken: user.accessToken, refreshToken: user.refreshToken ?? null, userId: user.id }
-        );
-        if (!lastResult.success) break;
-      }
+      const toList = (to as string).split(',').map((e: string) => e.trim()).filter(Boolean).join(', ');
+      const lastResult = await sendEmail(
+        { to: toList, cc: cc || undefined, subject, body: emailHtml, isHtml: true, inlineImages },
+        { accessToken: user.accessToken, refreshToken: user.refreshToken ?? null, userId: user.id }
+      );
 
       if (lastResult.success) {
         res.json({ success: true });
