@@ -1028,12 +1028,6 @@ class GoogleOAuthAuth {
         if (!response.ok) {
           const errorText = await response.text();
           console.error('❌ Reviews API Error:', errorText);
-          
-          if (response.status === 403 || response.status === 404) {
-            console.log('ℹ️ Reviews not available for this location');
-            return allReviews;
-          }
-          
           throw new Error(`Reviews API Error: ${response.status} - ${errorText}`);
         }
 
@@ -1073,7 +1067,7 @@ class GoogleOAuthAuth {
       return allReviews;
     } catch (error: any) {
       console.error('❌ Error fetching reviews:', error.message || error);
-      return [];
+      throw error;
     }
   }
 

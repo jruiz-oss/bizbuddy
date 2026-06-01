@@ -1266,9 +1266,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(transformedReviews);
     } catch (error: any) {
       console.error('❌ Error fetching reviews:', error);
-      res.status(500).json({ 
-        message: "Failed to fetch reviews", 
-        error: error.message 
+      const msg: string = error?.message || String(error);
+      // Surface the real Google API error so the client can display it
+      const statusCode = msg.includes('401') ? 401 : msg.includes('403') ? 403 : 500;
+      res.status(statusCode).json({
+        message: "Failed to fetch reviews",
+        error: msg
       });
     }
   });

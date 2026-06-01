@@ -357,21 +357,34 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
               locationName: location.name,
               locationAddress: location.address || "",
             }));
-            let filteredReviews = enrichedReviews.filter((r: Review) => 
+            let filteredReviews = enrichedReviews.filter((r: Review) =>
               r.starRating >= minStars && r.starRating <= maxStars
             );
-            
+
             if (endDate) {
               const end = new Date(endDate);
               end.setHours(23, 59, 59, 999);
               filteredReviews = filteredReviews.filter((r: Review) => new Date(r.createTime) <= end);
             }
-            
+
             allBadReviews.push(...filteredReviews);
             successCount++;
           } else {
             errorCount++;
-            console.error(`Failed to fetch reviews for ${location.name}: ${response.status}`);
+            let errorDetail = `HTTP ${response.status}`;
+            try {
+              const errBody = await response.json();
+              errorDetail = errBody.error || errBody.message || errorDetail;
+            } catch {}
+            console.error(`Failed to fetch reviews for ${location.name}: ${errorDetail}`);
+            // Surface the first error prominently so the user knows what's wrong
+            if (errorCount === 1) {
+              toast({
+                title: `Reviews API error for ${location.name}`,
+                description: errorDetail,
+                variant: "destructive",
+              });
+            }
           }
         } catch (err) {
           errorCount++;
