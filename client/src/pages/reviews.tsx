@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, Search, Star, AlertTriangle, FolderOpen, X, Mail, MapPin } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
 import type { Client, ClientLocation, LocationFolder } from "@shared/schema";
@@ -344,12 +344,12 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
         if (!location) continue;
         
         try {
-          const url = new URL(`/api/locations/${locationId}/reviews`, window.location.origin);
-          if (startDate) {
-            url.searchParams.set('startDate', startDate);
-          }
-          
-          const response = await fetch(url.toString());
+          const params = new URLSearchParams();
+          if (startDate) params.set('startDate', startDate);
+          const qs = params.toString() ? `?${params.toString()}` : '';
+          const response = await fetch(getApiUrl(`/api/locations/${locationId}/reviews${qs}`), {
+            credentials: 'include',
+          });
           if (response.ok) {
             const locationReviews = await response.json();
             const enrichedReviews = locationReviews.map((review: Review) => ({
