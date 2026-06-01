@@ -1737,7 +1737,7 @@ export default function Dashboard({
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
                       Locations ({upcomingJobDetail.items.length})
                     </p>
-                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                    <div className="space-y-1 max-h-40 overflow-y-auto pr-2">
                       {upcomingJobDetail.items.map((item: any) => (
                         <div key={item.id} className="flex items-center gap-2 text-sm py-0.5">
                           <Building2 className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -1758,7 +1758,9 @@ export default function Dashboard({
             const grp = selectedUpcoming.data.group;
             const nextDate: Date | null = selectedUpcoming.data.next;
             const lookback: number = grp.lookbackDays ?? 7;
-            const coverStart = nextDate ? new Date(nextDate.getTime() - lookback * 24 * 60 * 60 * 1000) : null;
+            // End = day before send date (send date itself is excluded from the review window)
+            const coverEnd = nextDate ? new Date(nextDate.getTime() - 24 * 60 * 60 * 1000) : null;
+            const coverStart = coverEnd ? new Date(coverEnd.getTime() - (lookback - 1) * 24 * 60 * 60 * 1000) : null;
             const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
             return (
               <>
@@ -1791,11 +1793,11 @@ export default function Dashboard({
                       <span className="text-sm text-muted-foreground ml-1">{grp.minStars ?? 1}–{grp.maxStars ?? 5} stars</span>
                     </div>
                   </div>
-                  {coverStart && nextDate && (
+                  {coverStart && coverEnd && (
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Reviews Covered</p>
                       <p className="text-sm text-muted-foreground">
-                        {fmt(coverStart)} – {fmt(nextDate)}
+                        {fmt(coverStart)} – {fmt(coverEnd)}
                         <span className="text-xs ml-1.5 text-muted-foreground/70">({lookback} day lookback)</span>
                       </p>
                     </div>
@@ -1824,7 +1826,7 @@ export default function Dashboard({
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
                         Monitoring {grp.locationIds.length} Location{grp.locationIds.length !== 1 ? "s" : ""}
                       </p>
-                      <div className="space-y-1 max-h-36 overflow-y-auto">
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-2">
                         {grp.locationIds.map((lid: string) => {
                           const loc = locations.find((l) => l.id === lid);
                           return (
