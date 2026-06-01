@@ -15,6 +15,7 @@ import { db } from "./db";
 import { eq, and, or, desc, inArray, gte, lte, sql } from "drizzle-orm";
 import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
+import { generateReviewEmailHtml } from "./utils/review-email-template";
 
 // Helper function to extract local user ID from request headers
 function getLocalUserId(req: any): string | null {
@@ -4480,6 +4481,81 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: false,
         error: error.message || "Failed to send email"
       });
+    }
+  });
+
+  // Send manual reviews email — same template as automated, with Copy/Email buttons and optional custom message
+  app.post("/api/reviews/send-email", requireAuth, async (req, res) => {
+    try {
+      const { to, reviews, minStars, maxStars, startDate, endDate, customMessage, clientName } = req.body;
+      if (!to || !reviews || !Array.isArray(reviews)) {
+        return res.status(400).json({ success: false, error: "Missing required fields: to, reviews" });
+      }
+
+      const userId = req.session!.userId!;
+      const user = await storage.getUser(userId);
+      if (!user?.accessToken) {
+        return res.status(401).json({ success: false, error: "Google account not connected — please re-authenticate." });
+      }
+
+      // Build date range text
+      let dateRangeText = '';
+      if (startDate && endDate) {
+        dateRangeText = `${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      } else if (startDate) {
+        dateRangeText = `Since ${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      } else if (endDate) {
+        dateRangeText = `Through ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      }
+
+      const appBaseUrl = process.env.FRONTEND_URL?.trim() ||
+        process.env.APP_URL?.trim() ||
+        (process.env.REPLIT_DOMAINS?.split(',')[0]?.trim()
+          ? `https://${process.env.REPLIT_DOMAINS.split(',')[0].trim()}`
+          : undefined);
+
+      const emailHtml = generateReviewEmailHtml(
+        reviews,
+        clientName || 'Reviews',
+        minStars ?? 1,
+        maxStars ?? 5,
+        dateRangeText,
+        undefined,
+        customMessage || undefined,
+        appBaseUrl
+      );
+
+      const starText = (minStars ?? 1) === (maxStars ?? 5)
+        ? `${minStars ?? 1} star`
+        : `${minStars ?? 1}-${maxStars ?? 5} stars`;
+      const subject = reviews.length > 0
+        ? `${reviews.length} Review${reviews.length !== 1 ? 's' : ''} — ${starText}${clientName ? ` — ${clientName}` : ''}`
+        : `Review Summary — ${starText}`;
+
+      // Load logo for inline attachment (same as automated emails)
+      const logoPath = path.join(process.cwd(), 'client', 'src', 'assets', 'commit-logo.png');
+      const inlineImages = fs.existsSync(logoPath)
+        ? [{ cid: 'commit-logo', path: logoPath, mimeType: 'image/png' as const }]
+        : [];
+
+      const recipients = (to as string).split(',').map((e: string) => e.trim()).filter(Boolean);
+      let lastResult: any = { success: true };
+      for (const recipient of recipients) {
+        lastResult = await sendEmail(
+          { to: recipient, subject, body: emailHtml, isHtml: true, inlineImages },
+          { accessToken: user.accessToken, refreshToken: user.refreshToken ?? null, userId: user.id }
+        );
+        if (!lastResult.success) break;
+      }
+
+      if (lastResult.success) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json(lastResult);
+      }
+    } catch (error: any) {
+      console.error('Reviews email send error:', error);
+      res.status(500).json({ success: false, error: error.message || "Failed to send email" });
     }
   });
 

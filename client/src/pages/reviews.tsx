@@ -14,6 +14,7 @@ import { Loader2, Search, Star, AlertTriangle, FolderOpen, X, Mail, MapPin } fro
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getApiUrl } from "@/lib/queryClient";
+import { Textarea } from "@/components/ui/textarea";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
 import type { Client, ClientLocation, LocationFolder } from "@shared/schema";
@@ -67,6 +68,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
   const [maxStars, setMaxStars] = useState<number>(3);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
+  const [customMessage, setCustomMessage] = useState("");
 
   const { data: clients = [] } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -96,12 +98,16 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
   const selectedLocations = locations.filter(l => selectedLocationIds.includes(l.id));
 
   const sendEmailMutation = useMutation({
-    mutationFn: async ({ to, subject, body }: { to: string; subject: string; body: string }) => {
-      const response = await apiRequest("POST", "/api/emails/send", {
-        to,
-        subject,
-        body,
-        isHtml: true
+    mutationFn: async () => {
+      const response = await apiRequest("POST", "/api/reviews/send-email", {
+        to: recipientEmail,
+        reviews,
+        minStars,
+        maxStars,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+        customMessage: customMessage || undefined,
+        clientName: selectedClient?.name,
       });
       return response.json();
     },
@@ -113,121 +119,12 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
       });
       setEmailModalOpen(false);
       setRecipientEmail("");
+      setCustomMessage("");
     },
     onError: (error: any) => {
       showApiError("Failed to Send Email", parseApiError(error, "Could not send the email. Please try again."));
     },
   });
-
-  const generateStarsHtml = (rating: number) => {
-    return Array.from({ length: 5 }, (_, i) => 
-      i < rating 
-        ? '<span style="color: #facc15; font-size: 18px;">★</span>'
-        : '<span style="color: #d1d5db; font-size: 18px;">★</span>'
-    ).join('');
-  };
-
-  const generateEmailHtml = () => {
-    // Get all selected locations for the report
-    const selectedLocations = locations.filter(l => selectedLocationIds.includes(l.id));
-    
-    // Group reviews by location
-    const reviewsByLocationId = reviews.reduce((acc, review) => {
-      const key = review.gbpLocationId || '';
-      if (!acc[key]) {
-        acc[key] = [];
-      }
-      acc[key].push(review);
-      return acc;
-    }, {} as Record<string, Review[]>);
-
-    const starText = minStars === maxStars 
-      ? `${minStars} star${minStars !== 1 ? 's' : ''}`
-      : `${minStars}-${maxStars} stars`;
-    
-    const dateRangeText = startDate && endDate 
-      ? `${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-      : startDate 
-        ? `Since ${new Date(startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-        : endDate 
-          ? `Through ${new Date(endDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-          : '';
-
-    const titleText = reviews.length > 0
-      ? `${reviews.length} Review${reviews.length !== 1 ? 's' : ''} — ${starText}`
-      : `Review Summary — ${starText}`;
-
-    let html = `
-      <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
-        <h1 style="color: #1f2937; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px;">
-          ${titleText}
-        </h1>
-        ${dateRangeText ? `<p style="color: #6b7280; margin-bottom: 20px;">${dateRangeText}</p>` : ''}
-    `;
-
-    // Separate locations with reviews from those without
-    const locationsWithReviewsList = selectedLocations.filter(l => (reviewsByLocationId[l.gbpLocationId] || []).length > 0);
-    const locationsWithoutReviewsList = selectedLocations.filter(l => (reviewsByLocationId[l.gbpLocationId] || []).length === 0);
-
-    // Show locations with reviews
-    for (const location of locationsWithReviewsList) {
-      const locationReviews = reviewsByLocationId[location.gbpLocationId] || [];
-      
-      html += `
-        <div style="margin-bottom: 30px; border: 2px solid #e5e7eb; border-radius: 12px; padding: 20px;">
-          <h2 style="color: #374151; background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0;">
-            📍 ${location.name}
-            ${location.address ? `<span style="font-size: 14px; font-weight: normal; color: #6b7280; display: block;">${location.address}</span>` : ''}
-          </h2>
-      `;
-
-      for (const review of locationReviews) {
-        html += `
-          <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #fff;">
-            <div style="margin-bottom: 10px;">
-              <strong style="color: #1f2937; font-size: 16px;">${review.reviewer}</strong>
-              <div style="margin-top: 4px;">
-                ${generateStarsHtml(review.starRating)}
-                <span style="color: #6b7280; font-size: 14px; margin-left: 8px;">
-                  ${new Date(review.createTime).toLocaleDateString("en-US", {
-                    year: "numeric",
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </span>
-              </div>
-            </div>
-            ${review.comment 
-              ? `<p style="color: #374151; margin: 0; line-height: 1.6; font-style: italic;">"${review.comment}"</p>` 
-              : `<p style="color: #9ca3af; margin: 0; font-style: italic;">No comment provided</p>`
-            }
-          </div>
-        `;
-      }
-
-      html += `</div>`;
-    }
-
-    if (locationsWithoutReviewsList.length > 0) {
-      const locationNames = locationsWithoutReviewsList.map(l => l.name).join(' \u2022 ');
-      html += `
-        <div style="margin-top: 20px; padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
-          <p style="color: #6b7280; margin: 0 0 8px 0; font-size: 14px; font-weight: 500;">
-            No new reviews for:
-          </p>
-          <p style="color: #9ca3af; margin: 0; font-size: 13px; line-height: 1.6;">
-            ${locationNames}
-          </p>
-        </div>
-      `;
-    }
-
-    html += `
-      </div>
-    `;
-
-    return html;
-  };
 
   const handleSendEmail = () => {
     if (!recipientEmail) {
@@ -238,67 +135,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
       });
       return;
     }
-
-    const starText = minStars === maxStars 
-      ? `${minStars} star`
-      : `${minStars}-${maxStars} stars`;
-
-    // Get unique location names for subject line (deduplicated and similar names combined)
-    const allLocationNames = reviews.map(r => r.locationName).filter(Boolean) as string[];
-    const uniqueLocationNames = [...new Set(allLocationNames)];
-    
-    // Combine similar location names (80% similarity threshold)
-    const combinedNames: string[] = [];
-    const usedIndices = new Set<number>();
-    
-    for (let i = 0; i < uniqueLocationNames.length; i++) {
-      if (usedIndices.has(i)) continue;
-      
-      const name1 = uniqueLocationNames[i];
-      let baseName = name1;
-      
-      // Find similar names and extract common prefix
-      for (let j = i + 1; j < uniqueLocationNames.length; j++) {
-        if (usedIndices.has(j)) continue;
-        
-        const name2 = uniqueLocationNames[j];
-        const words1 = name1.toLowerCase().split(/\s+/);
-        const words2 = name2.toLowerCase().split(/\s+/);
-        const maxWords = Math.max(words1.length, words2.length);
-        
-        // Find common prefix words
-        let commonWords = 0;
-        for (let k = 0; k < Math.min(words1.length, words2.length); k++) {
-          if (words1[k] === words2[k]) commonWords++;
-          else break;
-        }
-        
-        // If 80% or more words match from start, consider them similar
-        if (commonWords >= maxWords * 0.8 || commonWords >= 3) {
-          usedIndices.add(j);
-          // Use the common prefix as base name
-          const originalWords = name1.split(/\s+/);
-          baseName = originalWords.slice(0, commonWords).join(' ');
-        }
-      }
-      
-      usedIndices.add(i);
-      combinedNames.push(baseName);
-    }
-    
-    const locationNamesText = combinedNames.length > 0 
-      ? ` - ${combinedNames.join(', ')}`
-      : '';
-
-    const subjectText = reviews.length > 0
-      ? `${reviews.length} New Review${reviews.length !== 1 ? 's' : ''} — ${starText}${locationNamesText}`
-      : `Review Summary — No New ${starText} Reviews`;
-
-    sendEmailMutation.mutate({
-      to: recipientEmail,
-      subject: subjectText,
-      body: generateEmailHtml(),
-    });
+    sendEmailMutation.mutate();
   };
 
   const filteredLocations = useMemo(() => {
@@ -842,14 +679,16 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
               />
               <p className="text-xs text-muted-foreground">Separate multiple emails with commas</p>
             </div>
-            <div className="bg-muted p-3 rounded-md text-sm">
-              <p className="font-medium mb-1">Email Preview:</p>
-              <p className="text-muted-foreground">
-                Subject: Reviews Report: {selectedClient?.name || 'Client'} - {reviews.length} review{reviews.length !== 1 ? 's' : ''}
-              </p>
-              <p className="text-muted-foreground mt-1">
-                Reviews grouped by location with star ratings, comments, and reviewer names.
-              </p>
+            <div className="space-y-2">
+              <Label htmlFor="custom-message">Message (optional)</Label>
+              <Textarea
+                id="custom-message"
+                placeholder="Add a personal note to include at the top of the email..."
+                value={customMessage}
+                onChange={(e) => setCustomMessage(e.target.value)}
+                rows={3}
+                data-testid="input-custom-message"
+              />
             </div>
           </div>
           <DialogFooter>
