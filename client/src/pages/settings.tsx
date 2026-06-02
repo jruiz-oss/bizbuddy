@@ -227,6 +227,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     minStars: 1,
     maxStars: 3,
     lookbackDays: 7,
+    lookbackOffset: 0,
     customMessage: "",
     customSubject: "",
     isEnabled: true,
@@ -260,6 +261,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         minStars: 1,
         maxStars: 3,
         lookbackDays: 7,
+        lookbackOffset: 0,
         customMessage: "",
         customSubject: "",
         isEnabled: true,
@@ -652,7 +654,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                 value={editingGroup.frequency || "weekly"}
                                 onValueChange={(v: "weekly" | "biweekly" | "monthly") => {
                                   const lookback = v === "monthly" ? 30 : v === "biweekly" ? 14 : 7;
-                                  setEditingGroup({ ...editingGroup, frequency: v, lookbackDays: lookback });
+                                  setEditingGroup({ ...editingGroup, frequency: v, lookbackDays: lookback, lookbackOffset: 0 });
                                 }}
                               >
                                 <SelectTrigger data-testid={`select-edit-group-frequency-${group.id}`}><SelectValue /></SelectTrigger>
@@ -689,12 +691,29 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             </div>
                             <div className="space-y-2">
                               <Label>Review Period (days back, excluding today)</Label>
-                              <Select value={(editingGroup.lookbackDays || 7).toString()} onValueChange={(v) => setEditingGroup({ ...editingGroup, lookbackDays: parseInt(v) })}>
-                                <SelectTrigger className="w-32" data-testid={`select-edit-group-lookback-${group.id}`}><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
-                                </SelectContent>
-                              </Select>
+                              <div className="flex items-center gap-3">
+                                <Select value={(editingGroup.lookbackDays || 7).toString()} onValueChange={(v) => setEditingGroup({ ...editingGroup, lookbackDays: parseInt(v) })}>
+                                  <SelectTrigger className="w-32" data-testid={`select-edit-group-lookback-${group.id}`}><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingGroup({ ...editingGroup, lookbackOffset: (editingGroup.lookbackOffset || 0) > 0 ? 0 : (editingGroup.lookbackDays || 7) })}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(editingGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
+                                  data-testid={`button-edit-group-prev-period-${group.id}`}
+                                  title={(editingGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
+                                >
+                                  <History className="w-3 h-3" />
+                                  Prior period
+                                </button>
+                              </div>
+                              {(editingGroup.lookbackOffset || 0) > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  Window shifts back — covers {(editingGroup.lookbackOffset || 0) + (editingGroup.lookbackDays || 7)}–{editingGroup.lookbackOffset || 0} days ago instead of the most recent {editingGroup.lookbackDays || 7} days
+                                </p>
+                              )}
                             </div>
                             <div className="space-y-2">
                               <Label>Delivery Format</Label>
@@ -900,7 +919,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               <span className="mx-2">•</span>
                               <span>{group.minStars}-{group.maxStars} stars</span>
                               <span className="mx-2">•</span>
-                              <span>Last {group.lookbackDays || 7} days</span>
+                              <span>{group.lookbackOffset > 0 ? `Prior ${group.lookbackDays || 7} days` : `Last ${group.lookbackDays || 7} days`}</span>
                               <span className="mx-2">•</span>
                               <span>{group.locationIds.length} location{group.locationIds.length !== 1 ? 's' : ''}</span>
                               {(group as any).startDate && (
@@ -963,7 +982,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                         value={newGroup.frequency}
                         onValueChange={(v: "weekly" | "biweekly" | "monthly") => {
                           const lookback = v === "monthly" ? 30 : v === "biweekly" ? 14 : 7;
-                          setNewGroup({ ...newGroup, frequency: v, lookbackDays: lookback });
+                          setNewGroup({ ...newGroup, frequency: v, lookbackDays: lookback, lookbackOffset: 0 });
                         }}
                       >
                         <SelectTrigger data-testid="select-new-group-frequency"><SelectValue /></SelectTrigger>
@@ -1000,12 +1019,29 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     </div>
                     <div className="space-y-2">
                       <Label>Review Period (days back, excluding today)</Label>
-                      <Select value={newGroup.lookbackDays.toString()} onValueChange={(v) => setNewGroup({ ...newGroup, lookbackDays: parseInt(v) })}>
-                        <SelectTrigger className="w-32" data-testid="select-new-group-lookback"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <div className="flex items-center gap-3">
+                        <Select value={newGroup.lookbackDays.toString()} onValueChange={(v) => setNewGroup({ ...newGroup, lookbackDays: parseInt(v) })}>
+                          <SelectTrigger className="w-32" data-testid="select-new-group-lookback"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <button
+                          type="button"
+                          onClick={() => setNewGroup({ ...newGroup, lookbackOffset: (newGroup.lookbackOffset || 0) > 0 ? 0 : newGroup.lookbackDays })}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(newGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
+                          data-testid="button-new-group-prev-period"
+                          title={(newGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
+                        >
+                          <History className="w-3 h-3" />
+                          Prior period
+                        </button>
+                      </div>
+                      {(newGroup.lookbackOffset || 0) > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Window shifts back — covers {(newGroup.lookbackOffset || 0) + newGroup.lookbackDays}–{newGroup.lookbackOffset || 0} days ago instead of the most recent {newGroup.lookbackDays} days
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label>Delivery Format</Label>

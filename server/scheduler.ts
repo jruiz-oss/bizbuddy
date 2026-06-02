@@ -621,13 +621,16 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     
     // Get reviews from the lookback period (excluding today in Phoenix time)
     const lookbackDays = group.lookbackDays || 7;
+    const lookbackOffset = (group as any).lookbackOffset || 0; // days to shift window back; 0 = current period
     // Calculate midnight in Phoenix timezone (UTC-7, no DST) so the boundary
     // is consistent regardless of whether the server runs in UTC or another zone
     const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC-7 in ms
     const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
     const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
     const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
-    const periodStart = new Date(today.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+    // periodEnd shifts back by offset (0 = today, N = N days ago)
+    const periodEnd = new Date(today.getTime() - lookbackOffset * 24 * 60 * 60 * 1000);
+    const periodStart = new Date(periodEnd.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
     
     for (const location of locations) {
       let matchingReviewCount = 0;
@@ -664,7 +667,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           }
 
           // Date window check (excluding today in Phoenix time)
-          const inWindow = reviewDate ? (reviewDate >= periodStart && reviewDate < today) : false;
+          const inWindow = reviewDate ? (reviewDate >= periodStart && reviewDate < periodEnd) : false;
           if (reviewDate && !inWindow) {
             if (reviewDate >= today) droppedAsToday++;
             else droppedAsTooOld++;
@@ -710,7 +713,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
     console.log(
       `📊 [Review diag] Group "${group.name}" summary: ${locations.length} location(s) checked | ` +
-      `lookback: ${lookbackDays} days | star filter: ${minStars}-${maxStars} | ` +
+      `lookback: ${lookbackDays} days (offset: ${lookbackOffset}) | star filter: ${minStars}-${maxStars} | ` +
       `total matching reviews: ${allReviews.length}`
     );
     
@@ -733,8 +736,9 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
 
     // Generate email HTML with all checked locations (even if no reviews)
     const _midnightTodayPhoenixMs = Math.floor((Date.now() - PHOENIX_OFFSET_MS) / 86400000) * 86400000;
-    const _endDate = new Date((_midnightTodayPhoenixMs - 86400000) + PHOENIX_OFFSET_MS);
-    const _startDate = new Date((_midnightTodayPhoenixMs - lookbackDays * 86400000) + PHOENIX_OFFSET_MS);
+    // Shift end date back by offset: if offset=0, end is yesterday; if offset=7, end is 7 days ago
+    const _endDate = new Date((_midnightTodayPhoenixMs - (lookbackOffset + 1) * 86400000) + PHOENIX_OFFSET_MS);
+    const _startDate = new Date((_midnightTodayPhoenixMs - (lookbackOffset + lookbackDays) * 86400000) + PHOENIX_OFFSET_MS);
     const schedulerDateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
     const emailHtml = generateReviewEmailHtmlTemplate(allReviews, group.name, minStars, maxStars, schedulerDateRange, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
@@ -823,9 +827,11 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       console.log(`📊 Generating spreadsheet attachment for group "${group.name}"...`);
       const breakout = ((group as any).sheetBreakout || 'region') as 'region' | 'location' | 'none';
       const nowDate = new Date();
-      const rangeStart = new Date(nowDate);
+      const rangeEnd = new Date(nowDate);
+      rangeEnd.setDate(rangeEnd.getDate() - lookbackOffset);
+      const rangeStart = new Date(rangeEnd);
       rangeStart.setDate(rangeStart.getDate() - lookbackDays);
-      const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${nowDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${rangeEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
       const reviewsForSheet = allReviews.map((r: any) => ({
         locationName: r.locationName || 'Unknown',
         locationAddress: r.locationAddress,
@@ -853,7 +859,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const emailBody = outputFormat === 'sheet' && xlsxAttachments
       ? (group.customMessage
           ? `${group.customMessage}`
-          : `Please find attached your review recap for the past ${lookbackDays} days.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
+          : `Please find attached your review recap for the past ${lookbackDays} days${lookbackOffset > 0 ? ` (${lookbackOffset}–${lookbackOffset + lookbackDays} days ago)` : ''}.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
       : emailHtml;
     const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
 

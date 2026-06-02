@@ -255,6 +255,7 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   maxStars: integer("max_stars").notNull().default(3),
   frequency: text("frequency").notNull().default("weekly"), // "weekly" | "biweekly" | "monthly"
   lookbackDays: integer("lookback_days").notNull().default(7),
+  lookbackOffset: integer("lookback_offset").notNull().default(0), // days to shift window back; 0 = current period, N = prior period (start and end both shift back by N days)
   customMessage: text("custom_message"),
   customSubject: text("custom_subject"),
   ccEmail: text("cc_email"),

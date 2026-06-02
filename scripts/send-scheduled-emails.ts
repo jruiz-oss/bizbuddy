@@ -374,11 +374,13 @@ async function sendScheduledReviewEmailForGroup(
     // so the boundary is consistent regardless of the server's timezone.
     // Mirrors the logic in server/scheduler.ts.
     const lookbackDays = group.lookbackDays || 7;
+    const lookbackOffset = (group as any).lookbackOffset || 0; // shift window back by N days
     const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC-7 in ms
     const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
     const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
     const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
-    const periodStart = new Date(today.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(today.getTime() - lookbackOffset * 24 * 60 * 60 * 1000);
+    const periodStart = new Date(periodEnd.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
 
     for (const location of locations) {
       let matchingReviewCount = 0;
@@ -399,7 +401,7 @@ async function sendScheduledReviewEmailForGroup(
           if (starRating >= minStars && starRating <= maxStars) {
             const reviewDate = new Date(review.createTime);
             // Exclude today: window is [periodStart, today)
-            if (reviewDate >= periodStart && reviewDate < today) {
+            if (reviewDate >= periodStart && reviewDate < periodEnd) {
               matchingReviewCount++;
               allReviews.push({
                 reviewer: review.reviewer?.displayName || 'Anonymous',
@@ -433,9 +435,11 @@ async function sendScheduledReviewEmailForGroup(
 
     // Build a friendly date range label for the sheet
     const now = new Date();
-    const rangeStart = new Date(now);
+    const rangeEnd = new Date(now);
+    rangeEnd.setDate(rangeEnd.getDate() - lookbackOffset);
+    const rangeStart = new Date(rangeEnd);
     rangeStart.setDate(rangeStart.getDate() - (group.lookbackDays || 7));
-    const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${rangeEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
     // Deduplicate location names for the subject line
     const allLocationNames = allReviews.map(r => r.locationName).filter(Boolean) as string[];
