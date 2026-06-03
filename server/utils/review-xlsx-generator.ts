@@ -233,7 +233,7 @@ function deriveRegion(review: ReviewForSheet): string {
 }
 
 const BAR_CELLS = 20;
-const BAR_START_COL = 4; // columns 4–23 are bar cells (narrow)
+const BAR_START_COL = 7; // columns 7–26 are bar cells (narrow); cols D/E/F stay wide
 
 function buildThemeStats(groupReviews: ReviewForSheet[]): Array<[string, { pos: number; neg: number }]> {
   const stats: Record<string, { pos: number; neg: number }> = {};
@@ -317,16 +317,16 @@ function addSummaryTab(
 ) {
   const ws = wb.addWorksheet("Summary", { properties: { tabColor: { argb: "FF1F2937" } } });
 
-  // Cols 1–3 used by both summary and theme section; cols 4–23 are narrow bar cells
+  // Cols 1–6 used by summary; cols 7–26 are narrow bar cells for the theme section
   ws.columns = [
     { header: "Group / Region / Location", key: "name",         width: 30 },
     { header: "Total Reviews",             key: "total",        width: 14 },
     { header: "Avg Stars",                 key: "avg",          width: 10 },
     { header: "Has Response",              key: "responded",    width: 14 },
     { header: "No Response",               key: "notResponded", width: 14 },
-    { header: "Top Themes",                key: "topThemes",    width: 50 },
+    { header: "",                          key: "spacer",       width: 4  },
   ];
-  // Narrow bar columns (4–23); these are empty in the summary rows above
+  // Narrow bar columns (7–26); empty in the summary rows above
   for (let i = BAR_START_COL; i < BAR_START_COL + BAR_CELLS; i++) {
     ws.getColumn(i).width = 2.2;
   }
@@ -345,7 +345,7 @@ function addSummaryTab(
   ws.addRow([]); // spacer
 
   // ── Group stats header ──────────────────────────────────────────────────
-  const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Avg Stars", "Has Response", "No Response", "Top Themes"]);
+  const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Avg Stars", "Has Response", "No Response"]);
   hdr.height = 20;
   hdr.eachCell(cell => {
     cell.fill = HEADER_BG;
@@ -353,14 +353,6 @@ function addSummaryTab(
     cell.alignment = { vertical: "middle", horizontal: "center" };
   });
   hdr.commit();
-
-  // Build per-group text theme summary (existing col F text)
-  function themeSummaryText(groupReviews: ReviewForSheet[]): string {
-    return buildThemeStats(groupReviews)
-      .slice(0, 5)
-      .map(([theme, s]) => `${theme}: ${s.pos} positive, ${s.neg} negative`)
-      .join("  |  ");
-  }
 
   // Build groups
   const groups: Record<string, ReviewForSheet[]> = {};
@@ -379,17 +371,13 @@ function addSummaryTab(
     const avg = (groupReviews.reduce((s, r) => s + r.starRating, 0) / total).toFixed(1);
     const responded = groupReviews.filter(r => r.responseText || r.responseAuthor).length;
     const notResponded = total - responded;
-    const summary = themeSummaryText(groupReviews);
-    const dataRow = ws.addRow([key, total, Number(avg), responded, notResponded, summary]);
+    const dataRow = ws.addRow([key, total, Number(avg), responded, notResponded]);
     dataRow.eachCell((cell, col) => {
-      cell.alignment = { vertical: "middle", horizontal: col === 1 || col === 6 ? "left" : "center", wrapText: false };
+      cell.alignment = { vertical: "middle", horizontal: col === 1 ? "left" : "center", wrapText: false };
       cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
     });
     if (notResponded > 0) {
       dataRow.getCell(5).font = { bold: true, color: { argb: "FFDC2626" } };
-    }
-    if (summary) {
-      dataRow.getCell(6).font = { size: 10, color: { argb: "FF4B5563" } };
     }
     dataRow.commit();
   }
