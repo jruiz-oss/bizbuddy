@@ -241,11 +241,17 @@ function addSummaryTab(
 ) {
   const ws = wb.addWorksheet("Summary", { properties: { tabColor: { argb: "FF1F2937" } } });
   ws.columns = [
-    { header: "Group / Region / Location", key: "name", width: 36 },
-    { header: "Total Reviews",             key: "total", width: 16 },
-    { header: "Avg Stars",                 key: "avg",   width: 12 },
-    { header: "Has Response",              key: "responded", width: 16 },
+    { header: "Group / Region / Location", key: "name",         width: 36 },
+    { header: "Total Reviews",             key: "total",        width: 16 },
+    { header: "Avg Stars",                 key: "avg",          width: 12 },
+    { header: "Has Response",              key: "responded",    width: 16 },
     { header: "No Response",               key: "notResponded", width: 16 },
+    { header: "",                          key: "spacer",       width: 3  },
+    { header: "Theme",                     key: "theme",        width: 26 },
+    { header: "Total Mentions",            key: "themeTotal",   width: 16 },
+    { header: "Positive (4-5★)",           key: "pos",          width: 16 },
+    { header: "Neutral (3★)",              key: "neu",          width: 14 },
+    { header: "Negative (1-2★)",           key: "neg",          width: 16 },
   ];
 
   // Title rows
@@ -261,17 +267,18 @@ function addSummaryTab(
 
   ws.addRow([]); // spacer
 
-  // Header
+  // ── Group stats header ────────────────────────────────────────────────────
   const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Avg Stars", "Has Response", "No Response"]);
   hdr.height = 20;
-  hdr.eachCell(cell => {
+  hdr.eachCell((cell, col) => {
+    if (col > 5) return;
     cell.fill = HEADER_BG;
     cell.font = HEADER_FONT;
     cell.alignment = { vertical: "middle", horizontal: "center" };
   });
   hdr.commit();
 
-  // Build summary data
+  // Build group data
   const groups: Record<string, ReviewForSheet[]> = {};
   for (const r of reviews) {
     const key = breakout === "region"
@@ -290,14 +297,128 @@ function addSummaryTab(
     const notResponded = total - responded;
     const dataRow = ws.addRow([key, total, Number(avg), responded, notResponded]);
     dataRow.eachCell((cell, col) => {
+      if (col > 5) return;
       cell.alignment = { vertical: "middle", horizontal: col === 1 ? "left" : "center" };
       cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
     });
-    // Color-code no-response count
     if (notResponded > 0) {
       dataRow.getCell(5).font = { bold: true, color: { argb: "FFDC2626" } };
     }
     dataRow.commit();
+  }
+
+  // ── Theme breakdown ───────────────────────────────────────────────────────
+  // Sentiment: 4-5★ = positive, 3★ = neutral, 1-2★ = negative
+  function sentiment(stars: number): "pos" | "neu" | "neg" {
+    if (stars >= 4) return "pos";
+    if (stars === 3) return "neu";
+    return "neg";
+  }
+
+  // Build per-group theme stats
+  interface ThemeStat { total: number; pos: number; neu: number; neg: number }
+  const themesByGroup: Record<string, Record<string, ThemeStat>> = {};
+  for (const r of reviews) {
+    if (!r.themes || r.themes.length === 0) continue;
+    const groupKey = breakout === "region"
+      ? deriveRegion(r)
+      : breakout === "location"
+        ? r.locationName
+        : "All Locations";
+    if (!themesByGroup[groupKey]) themesByGroup[groupKey] = {};
+    const s = sentiment(r.starRating);
+    for (const theme of r.themes) {
+      if (!themesByGroup[groupKey][theme]) themesByGroup[groupKey][theme] = { total: 0, pos: 0, neu: 0, neg: 0 };
+      themesByGroup[groupKey][theme].total++;
+      themesByGroup[groupKey][theme][s]++;
+    }
+  }
+
+  const hasAnyThemes = Object.values(themesByGroup).some(g => Object.keys(g).length > 0);
+  if (!hasAnyThemes) {
+    ws.views = [{ state: "frozen", ySplit: 4 }];
+    return;
+  }
+
+  // Spacer before theme section
+  ws.addRow([]);
+  ws.addRow([]);
+
+  // Theme section title
+  const themeTitleRow = ws.addRow(["Theme Breakdown by " + groupLabel]);
+  themeTitleRow.getCell(1).font = { bold: true, size: 12, color: { argb: "FF1F2937" } };
+  themeTitleRow.height = 22;
+  themeTitleRow.commit();
+
+  // Theme header (cols 7-11)
+  const themeHdrRow = ws.addRow(["", "", "", "", "", "", "Theme", "Total Mentions", "Positive (4-5★)", "Neutral (3★)", "Negative (1-2★)"]);
+  themeHdrRow.height = 20;
+  themeHdrRow.eachCell((cell, col) => {
+    if (col < 7) return;
+    cell.fill = HEADER_BG;
+    cell.font = HEADER_FONT;
+    cell.alignment = { vertical: "middle", horizontal: "center" };
+  });
+  // Group label header on col 1
+  const groupHdrCell = themeHdrRow.getCell(1);
+  groupHdrCell.value = "Group / Region / Location";
+  groupHdrCell.fill = HEADER_BG;
+  groupHdrCell.font = HEADER_FONT;
+  groupHdrCell.alignment = { vertical: "middle", horizontal: "center" };
+  themeHdrRow.commit();
+
+  const POS_BG: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD1FAE5" } }; // green-100
+  const NEG_BG: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } }; // red-100
+  const NEU_BG: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } }; // yellow-100
+
+  // Emit one row per group+theme, sorted by total desc
+  for (const [groupKey, themes] of Object.entries(themesByGroup)) {
+    const sorted = Object.entries(themes).sort((a, b) => b[1].total - a[1].total);
+    let firstRow = true;
+    for (const [theme, stat] of sorted) {
+      const row = ws.addRow([
+        firstRow ? groupKey : "",  // col 1: group name only on first row
+        "", "", "", "",             // cols 2-5: empty
+        "",                        // col 6: spacer
+        theme,                     // col 7
+        stat.total,                // col 8
+        stat.pos,                  // col 9
+        stat.neu,                  // col 10
+        stat.neg,                  // col 11
+      ]);
+      row.height = 18;
+      // Group name styling
+      if (firstRow) {
+        const c = row.getCell(1);
+        c.font = { bold: true, color: { argb: "FF1F2937" } };
+        c.alignment = { vertical: "middle" };
+      }
+      // Spacer col 6
+      row.getCell(6).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+      // Theme name
+      row.getCell(7).alignment = { vertical: "middle", horizontal: "left" };
+      row.getCell(7).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+      // Total
+      row.getCell(8).alignment = { vertical: "middle", horizontal: "center" };
+      row.getCell(8).font = { bold: true };
+      // Positive
+      const posCell = row.getCell(9);
+      posCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (stat.pos > 0) { posCell.fill = POS_BG; posCell.font = { color: { argb: "FF065F46" } }; }
+      // Neutral
+      const neuCell = row.getCell(10);
+      neuCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (stat.neu > 0) { neuCell.fill = NEU_BG; }
+      // Negative
+      const negCell = row.getCell(11);
+      negCell.alignment = { vertical: "middle", horizontal: "center" };
+      if (stat.neg > 0) { negCell.fill = NEG_BG; negCell.font = { color: { argb: "FF991B1B" } }; }
+
+      row.commit();
+      firstRow = false;
+    }
+    // Separator after each group
+    ws.addRow([]);
   }
 
   ws.views = [{ state: "frozen", ySplit: 4 }];
