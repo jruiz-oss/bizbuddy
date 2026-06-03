@@ -89,7 +89,9 @@ export function SideNav() {
   return (
     <div className="w-56 bg-white border-r border-gray-200 min-h-screen flex flex-col fixed left-0 top-0">
       <div className="px-4 pt-4 pb-3">
-        <img src={logoPath} alt="BizBuddy" className="w-3/4 h-auto object-contain rounded-md" />
+        <Link href="/dashboard">
+          <img src={logoPath} alt="BizBuddy" className="w-3/4 h-auto object-contain rounded-md cursor-pointer" />
+        </Link>
       </div>
       <div className="px-3 pb-3">
         <div className="relative">
