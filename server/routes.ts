@@ -4637,7 +4637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/review-email-groups", requireAuth, async (req, res) => {
     try {
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
 
       if (!name || !recipientEmail) {
         return res.status(400).json({ message: "Name and recipient email are required" });
@@ -4662,7 +4662,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         outputFormat: outputFormat || "email",
         sheetBreakout: sheetBreakout || "region",
         sheetName: sheetName?.trim() || null,
-      });
+        themes: Array.isArray(themes) ? themes : [],
+      } as any);
 
       // Set location assignments
       if (locationIds && Array.isArray(locationIds)) {
@@ -4686,7 +4687,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Group not found" });
       }
       
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
 
       const group = await storage.updateReviewEmailGroup(id, {
         name,
@@ -4706,7 +4707,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         outputFormat: outputFormat || "email",
         sheetBreakout: sheetBreakout || "region",
         sheetName: sheetName?.trim() || null,
-      });
+        themes: Array.isArray(themes) ? themes : [],
+      } as any);
 
       // Update location assignments
       if (locationIds && Array.isArray(locationIds)) {

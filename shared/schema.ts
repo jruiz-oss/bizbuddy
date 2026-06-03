@@ -265,6 +265,7 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   outputFormat: text("output_format").notNull().default("email"), // "email" | "sheet"
   sheetBreakout: text("sheet_breakout").notNull().default("region"), // "region" | "location" | "none"
   sheetName: text("sheet_name"), // custom base name for the spreadsheet attachment; date range is appended dynamically. Falls back to group name when empty.
+  themes: json("themes").$type<string[]>().default([]), // optional list of theme labels for AI classification (e.g. ["cleanliness", "staff", "prices"])
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

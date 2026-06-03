@@ -17,6 +17,7 @@
     "build:migrate": "node_modules/.bin/esbuild scripts/migrate.ts --platform=node --packages=external --bundle --format=esm --outdir=dist"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@google-cloud/storage": "^7.18.0",
     "@hookform/resolvers": "^3.10.0",
     "@jridgewell/trace-mapping": "^0.3.25",

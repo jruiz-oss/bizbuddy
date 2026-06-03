@@ -8,6 +8,7 @@ export interface ReviewForSheet {
   reviewer: string;
   reviewDate: string;       // ISO string
   reviewText: string;
+  themes?: string[];        // AI-classified theme labels (optional)
   responseAuthor?: string;
   responseDate?: string;    // ISO string
   responseText?: string;
@@ -69,14 +70,15 @@ const DIVIDER_RESPONSE_BG: ExcelJS.Fill = {
   fgColor: { argb: "FF38BDF8" }, // sky-400
 };
 
-// Column definitions — 9 columns total
-// Cols 1-5: Reviewer block | Col 6: spacer | Cols 7-9: Response block
+// Column definitions — 10 columns total
+// Cols 1-6: Reviewer block (incl. Themes) | Col 7: spacer | Cols 8-10: Response block
 const COLUMNS: Partial<ExcelJS.Column>[] = [
   { header: "Location",        key: "locationName",    width: 28 },
   { header: "Stars",           key: "starRating",      width: 8  },
   { header: "Reviewer Name",   key: "reviewer",        width: 22 },
   { header: "Review Date",     key: "reviewDate",      width: 14 },
   { header: "Review Text",     key: "reviewText",      width: 52 },
+  { header: "Themes",          key: "themes",          width: 22 },
   { header: "",                key: "spacer",          width: 3  }, // visual divider
   { header: "Response By",     key: "responseAuthor",  width: 22 },
   { header: "Response Date",   key: "responseDate",    width: 14 },
@@ -101,12 +103,12 @@ function starsText(n: number): string {
 function applyHeaderRow(row: ExcelJS.Row) {
   row.height = 22;
   row.eachCell((cell, col) => {
-    if (col === 6) {
+    if (col === 7) {
       // spacer column — keep neutral
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
       return;
     }
-    const isReviewerBlock = col <= 5;
+    const isReviewerBlock = col <= 6;
     if (col === 1) {
       cell.fill = HEADER_BG;
       cell.font = HEADER_FONT;
@@ -132,11 +134,11 @@ function applyDataRow(row: ExcelJS.Row, hasResponse: boolean) {
   row.height = 60;
   row.eachCell((cell, col) => {
     cell.alignment = { vertical: "top", wrapText: true };
-    if (col === 6) {
+    if (col === 7) {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
       return;
     }
-    if (col <= 5) {
+    if (col <= 6) {
       cell.fill = REVIEWER_BG;
     } else {
       cell.fill = hasResponse ? RESPONSE_BG : {
@@ -157,7 +159,7 @@ function addReviewsToSheet(ws: ExcelJS.Worksheet, reviews: ReviewForSheet[]) {
   const headerRow = ws.getRow(1);
   // Manually set header values since we use custom layout
   headerRow.values = [
-    "Location", "Stars", "Reviewer Name", "Review Date", "Review Text",
+    "Location", "Stars", "Reviewer Name", "Review Date", "Review Text", "Themes",
     "", // spacer
     "Response By", "Response Date", "Response Text",
   ];
@@ -166,7 +168,7 @@ function addReviewsToSheet(ws: ExcelJS.Worksheet, reviews: ReviewForSheet[]) {
 
   // Add a sub-header divider row to visually separate reviewer/response blocks
   const dividerRow = ws.addRow([
-    "← Reviewer Info", "", "", "", "",
+    "← Reviewer Info", "", "", "", "", "",
     "",
     "← Business Response", "", "",
   ]);
@@ -176,13 +178,13 @@ function addReviewsToSheet(ws: ExcelJS.Worksheet, reviews: ReviewForSheet[]) {
       cell.fill = DIVIDER_REVIEWER_BG;
       cell.font = DIVIDER_FONT;
       cell.alignment = { vertical: "middle", horizontal: "left" };
-    } else if (col === 6) {
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
     } else if (col === 7) {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+    } else if (col === 8) {
       cell.fill = DIVIDER_RESPONSE_BG;
       cell.font = DIVIDER_FONT;
       cell.alignment = { vertical: "middle", horizontal: "left" };
-    } else if (col <= 5) {
+    } else if (col <= 6) {
       cell.fill = DIVIDER_REVIEWER_BG;
     } else {
       cell.fill = DIVIDER_RESPONSE_BG;
@@ -202,6 +204,7 @@ function addReviewsToSheet(ws: ExcelJS.Worksheet, reviews: ReviewForSheet[]) {
       r.reviewer,
       formatDate(r.reviewDate),
       r.reviewText || "(no comment)",
+      r.themes && r.themes.length > 0 ? r.themes.join(", ") : "",
       "", // spacer
       r.responseAuthor || "",
       formatDate(r.responseDate),

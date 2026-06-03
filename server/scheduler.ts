@@ -9,6 +9,7 @@ import { processJob } from "./job-processor";
 import { sendEmail, type InlineImage, type EmailAttachment } from "./gmail-service";
 import { generateReviewsXlsx } from "./utils/review-xlsx-generator";
 import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref, generateLocationCopyHtml, generateReviewEmailHtml as generateReviewEmailHtmlTemplate } from "./utils/review-email-template";
+import { classifyReviewThemes } from "./utils/review-theme-classifier";
 import fs from "fs";
 import path from "path";
 
@@ -716,7 +717,20 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       `lookback: ${lookbackDays} days (offset: ${lookbackOffset}) | star filter: ${minStars}-${maxStars} | ` +
       `total matching reviews: ${allReviews.length}`
     );
-    
+
+    // Theme classification — only runs when group has themes configured and reviews exist
+    const groupThemes: string[] = (group as any).themes || [];
+    if (groupThemes.length > 0 && allReviews.length > 0) {
+      const reviewsForClassification = allReviews.map((r: any, i: number) => ({
+        index: i,
+        comment: r.comment || "",
+      }));
+      const themeMap = await classifyReviewThemes(reviewsForClassification, groupThemes);
+      for (const [idx, themes] of Array.from(themeMap.entries())) {
+        allReviews[idx].themes = themes;
+      }
+    }
+
     // Determine the app base URL for copy links.
     // Priority: explicit APP_URL env var → Replit domains → undefined (buttons hidden)
     const appBaseUrl =
@@ -842,6 +856,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         responseAuthor: r.reviewReply?.comment ? (r.reviewReply?.author || 'Owner') : undefined,
         responseDate: r.reviewReply?.updateTime || undefined,
         responseText: r.reviewReply?.comment || undefined,
+        themes: r.themes as string[] | undefined,
       }));
       const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
       // Filename: custom sheet name (falls back to group name) + dynamic date range.

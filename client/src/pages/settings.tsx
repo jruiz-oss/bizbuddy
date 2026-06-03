@@ -235,6 +235,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     outputFormat: "email" as "email" | "sheet",
     sheetBreakout: "region" as "region" | "location" | "none",
     sheetName: "",
+    themes: [] as string[],
     locationIds: [] as string[],
   });
 
@@ -269,6 +270,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         outputFormat: "email",
         sheetBreakout: "region",
         sheetName: "",
+        themes: [],
         locationIds: [],
       });
       toast({
@@ -761,6 +763,20 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               )}
                             </div>
                             <div className="space-y-2">
+                              <Label>Review Themes (optional — AI classifies each review by theme)</Label>
+                              <Input
+                                value={((editingGroup as any).themes || []).join(", ")}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  const parsed = raw.split(",").map((t: string) => t.trim()).filter(Boolean);
+                                  setEditingGroup({ ...editingGroup, themes: parsed } as any);
+                                }}
+                                placeholder="e.g. cleanliness, staff, prices, cool finds"
+                                data-testid={`input-edit-group-themes-${group.id}`}
+                              />
+                              <p className="text-xs text-muted-foreground">Comma-separated. Only works for spreadsheet output. Each review gets a Themes column tagged by Claude.</p>
+                            </div>
+                            <div className="space-y-2">
                               <Label>Custom Subject Line (optional — overrides the auto-generated subject)</Label>
                               <Input
                                 value={editingGroup.customSubject || ""}
@@ -1084,6 +1100,20 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                           <p className="text-xs text-muted-foreground">The date range is added automatically — e.g. "{((newGroup as any).sheetName?.trim()) || newGroup.name || "Review recap"} – May 25 – Jun 1, 2026". Leave blank to use the group name.</p>
                         </div>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Review Themes (optional — AI classifies each review by theme)</Label>
+                      <Input
+                        value={((newGroup as any).themes || []).join(", ")}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const parsed = raw.split(",").map((t: string) => t.trim()).filter(Boolean);
+                          setNewGroup({ ...newGroup, themes: parsed } as any);
+                        }}
+                        placeholder="e.g. cleanliness, staff, prices, cool finds"
+                        data-testid="input-new-group-themes"
+                      />
+                      <p className="text-xs text-muted-foreground">Comma-separated. Only works for spreadsheet output. Each review gets a Themes column tagged by Claude.</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Custom Subject Line (optional — overrides the auto-generated subject)</Label>
