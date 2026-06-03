@@ -1,6 +1,8 @@
-import { createContext, useContext, useState, ReactNode, useCallback } from "react";
-import { setCurrentLocalUserId } from "@/lib/queryClient";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { setCurrentLocalUserId, getApiUrl } from "@/lib/queryClient";
 import type { LocalUser } from "@shared/schema";
+
+const STORAGE_KEY = "bizbuddy_local_user_id";
 
 type ModalMode = 'select' | 'manage';
 
@@ -11,33 +13,78 @@ interface LocalUserContextType {
   setShowSelectionModal: (show: boolean) => void;
   openSelectionModal: (mode?: ModalMode) => void;
   modalMode: ModalMode;
+  logout: () => void;
 }
 
 const LocalUserContext = createContext<LocalUserContextType | undefined>(undefined);
 
 export function LocalUserProvider({ children }: { children: ReactNode }) {
   const [selectedLocalUser, setSelectedLocalUserState] = useState<LocalUser | null>(null);
-  const [showSelectionModal, setShowSelectionModal] = useState(true);
+  // Hidden until we've checked localStorage; then we show it if no user is saved
+  const [showSelectionModal, setShowSelectionModal] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>('select');
+  const [initialized, setInitialized] = useState(false);
+
+  // On mount: try to restore the saved user from localStorage
+  useEffect(() => {
+    const savedId = localStorage.getItem(STORAGE_KEY);
+    if (savedId) {
+      fetch(getApiUrl(`/api/local-users/${savedId}`), { credentials: "include" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((user) => {
+          if (user) {
+            setSelectedLocalUserState(user);
+            setCurrentLocalUserId(user.id);
+            setShowSelectionModal(false);
+          } else {
+            localStorage.removeItem(STORAGE_KEY);
+            setShowSelectionModal(true);
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem(STORAGE_KEY);
+          setShowSelectionModal(true);
+        })
+        .finally(() => setInitialized(true));
+    } else {
+      setShowSelectionModal(true);
+      setInitialized(true);
+    }
+  }, []);
 
   const setSelectedLocalUser = useCallback((user: LocalUser | null) => {
     setSelectedLocalUserState(user);
     setCurrentLocalUserId(user?.id || null);
+    if (user) {
+      localStorage.setItem(STORAGE_KEY, user.id);
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   }, []);
+
+  const logout = useCallback(() => {
+    setSelectedLocalUser(null);
+    setModalMode('select');
+    setShowSelectionModal(true);
+  }, [setSelectedLocalUser]);
 
   const openSelectionModal = useCallback((mode: ModalMode = 'select') => {
     setModalMode(mode);
     setShowSelectionModal(true);
   }, []);
 
+  // Don't render children until we've resolved the saved session
+  if (!initialized) return null;
+
   return (
-    <LocalUserContext.Provider value={{ 
-      selectedLocalUser, 
-      setSelectedLocalUser, 
-      showSelectionModal, 
+    <LocalUserContext.Provider value={{
+      selectedLocalUser,
+      setSelectedLocalUser,
+      showSelectionModal,
       setShowSelectionModal,
       openSelectionModal,
-      modalMode
+      modalMode,
+      logout,
     }}>
       {children}
     </LocalUserContext.Provider>

@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLocalUserContext } from "@/contexts/local-user-context";
-import { RefreshCw, Users } from "lucide-react";
+import { LogOut, Users } from "lucide-react";
 
 export function FloatingUserButton() {
-  const { selectedLocalUser, openSelectionModal } = useLocalUserContext();
+  const { selectedLocalUser, openSelectionModal, logout } = useLocalUserContext();
   const [open, setOpen] = useState(false);
 
   if (!selectedLocalUser) return null;
@@ -16,9 +16,9 @@ export function FloatingUserButton() {
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
-  const handleSwitch = () => {
+  const handleLogout = () => {
     setOpen(false);
-    openSelectionModal('select');
+    logout();
   };
 
   const handleManageTeam = () => {
@@ -76,11 +76,11 @@ export function FloatingUserButton() {
                 variant="outline"
                 size="sm"
                 className="flex-1"
-                onClick={handleSwitch}
-                data-testid="button-switch-user"
+                onClick={handleLogout}
+                data-testid="button-logout-user"
               >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Switch
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign Out
               </Button>
               {selectedLocalUser.role === 'super_admin' && (
                 <Button

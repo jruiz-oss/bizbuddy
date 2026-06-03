@@ -4,5 +4,6 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     googleId?: string;
+    localUserId?: string;
   }
 }

@@ -240,6 +240,9 @@ export const localUsers = pgTable("local_users", {
   profilePictureUrl: text("profile_picture_url"),
   role: text("role").notNull().default("admin"),
   isActive: boolean("is_active").notNull().default(true),
+  // App-level credentials (independent of Google OAuth)
+  email: text("email").unique(),
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

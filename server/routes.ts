@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import verificationRoutes from "./verification-routes";
 import { storage } from "./storage";
 import { sendScheduledReviewEmailForGroup, syncPerfData } from "./scheduler";
@@ -21,6 +22,25 @@ import { generateReviewEmailHtml } from "./utils/review-email-template";
 function getLocalUserId(req: any): string | null {
   const localUserId = req.headers['x-local-user-id'];
   return typeof localUserId === 'string' ? localUserId : null;
+}
+
+// Password hashing helpers (Node built-in crypto, no extra packages)
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(':');
+  const verify = crypto.scryptSync(password, salt, 64).toString('hex');
+  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(verify, 'hex'));
+}
+
+// Strip passwordHash and add hasPassword for safe API responses
+function safeLocalUser(user: any) {
+  const { passwordHash, ...rest } = user;
+  return { ...rest, hasPassword: !!passwordHash };
 }
 
 // Helper function to convert Decimal fields to numbers for JSON serialization
@@ -604,7 +624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: 'Not authenticated' });
       }
       const localUsers = await storage.getLocalUsersByUserId(userId);
-      res.json(localUsers);
+      res.json(localUsers.map(safeLocalUser));
     } catch (error) {
       console.error('Error fetching local users:', error);
       res.status(500).json({ error: 'Failed to fetch local users' });
@@ -617,10 +637,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!localUser) {
         return res.status(404).json({ error: 'Local user not found' });
       }
-      res.json(localUser);
+      res.json(safeLocalUser(localUser));
     } catch (error) {
       console.error('Error fetching local user:', error);
       res.status(500).json({ error: 'Failed to fetch local user' });
+    }
+  });
+
+  // Login with password
+  app.post("/api/local-users/:id/login", async (req, res) => {
+    try {
+      const localUser = await storage.getLocalUser(req.params.id);
+      if (!localUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      if (!localUser.passwordHash) {
+        return res.status(400).json({ error: 'Account not set up yet' });
+      }
+      const { password } = req.body;
+      if (!password) {
+        return res.status(400).json({ error: 'Password is required' });
+      }
+      if (!verifyPassword(password, localUser.passwordHash)) {
+        return res.status(401).json({ error: 'Incorrect password' });
+      }
+      res.json(safeLocalUser(localUser));
+    } catch (error) {
+      console.error('Error logging in local user:', error);
+      res.status(500).json({ error: 'Login failed' });
+    }
+  });
+
+  // Set up account (email + password) for the first time
+  app.post("/api/local-users/:id/setup", async (req, res) => {
+    try {
+      const localUser = await storage.getLocalUser(req.params.id);
+      if (!localUser) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      }
+      const passwordHash = hashPassword(password);
+      const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
+      res.json(safeLocalUser(updated));
+    } catch (error) {
+      console.error('Error setting up local user account:', error);
+      res.status(500).json({ error: 'Setup failed' });
     }
   });
 
@@ -658,7 +725,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         profilePictureUrl: profilePictureUrl || null,
         role: isFirstUser ? 'super_admin' : (role || 'admin'),
       });
-      res.status(201).json(localUser);
+      res.status(201).json(safeLocalUser(localUser));
     } catch (error) {
       console.error('Error creating local user:', error);
       res.status(500).json({ error: 'Failed to create local user' });
@@ -673,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         title,
         profilePictureUrl,
       });
-      res.json(localUser);
+      res.json(safeLocalUser(localUser));
     } catch (error) {
       console.error('Error updating local user:', error);
       res.status(500).json({ error: 'Failed to update local user' });
