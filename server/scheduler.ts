@@ -718,9 +718,10 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       `total matching reviews: ${allReviews.length}`
     );
 
-    // Theme classification — only runs when group has themes configured and reviews exist
+    // Theme classification — runs when API key is set and there are reviews to classify.
+    // Works with or without user-defined themes (discovery-only mode if themes list is empty).
     const groupThemes: string[] = (group as any).themes || [];
-    if (groupThemes.length > 0 && allReviews.length > 0) {
+    if (process.env.ANTHROPIC_API_KEY && allReviews.length > 0) {
       const reviewsForClassification = allReviews.map((r: any, i: number) => ({
         index: i,
         comment: r.comment || "",
