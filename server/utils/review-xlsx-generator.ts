@@ -232,6 +232,82 @@ function deriveRegion(review: ReviewForSheet): string {
   return "Other";
 }
 
+const BAR_CELLS = 20;
+const BAR_START_COL = 4; // columns 4–23 are bar cells (narrow)
+
+function buildThemeStats(groupReviews: ReviewForSheet[]): Array<[string, { pos: number; neg: number }]> {
+  const stats: Record<string, { pos: number; neg: number }> = {};
+  for (const r of groupReviews) {
+    if (!r.themes || r.themes.length === 0) continue;
+    const isPos = r.starRating >= 4;
+    const isNeg = r.starRating <= 2;
+    for (const theme of r.themes) {
+      if (!stats[theme]) stats[theme] = { pos: 0, neg: 0 };
+      if (isPos) stats[theme].pos++;
+      if (isNeg) stats[theme].neg++;
+    }
+  }
+  return Object.entries(stats).sort((a, b) => (b[1].pos + b[1].neg) - (a[1].pos + a[1].neg));
+}
+
+function addThemeBarRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries: Array<[string, { pos: number; neg: number }]>, regionColor: string) {
+  if (themeEntries.length === 0) return;
+
+  // Region header spanning cols 1–3 + bar area
+  const regionHdr = ws.addRow([groupLabel, "", "", ...Array(BAR_CELLS).fill("")]);
+  regionHdr.height = 18;
+  regionHdr.eachCell((cell, col) => {
+    if (col <= 3 + BAR_CELLS) {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: regionColor } };
+      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+    }
+  });
+  regionHdr.getCell(1).value = groupLabel;
+  regionHdr.getCell(1).font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
+  regionHdr.getCell(1).alignment = { vertical: "middle" };
+  regionHdr.getCell(BAR_START_COL).value = "◀  green = positive   red = negative  ▶";
+  regionHdr.getCell(BAR_START_COL).font = { italic: true, size: 9, color: { argb: "FFe5e7eb" } };
+  regionHdr.commit();
+
+  // Theme rows
+  for (const [theme, s] of themeEntries) {
+    const total = s.pos + s.neg;
+    const greenCount = total > 0 ? Math.round((s.pos / total) * BAR_CELLS) : 0;
+    const label = theme.startsWith("* ") ? theme.slice(2) + " *" : theme;
+
+    const row = ws.addRow([label, s.pos, s.neg, ...Array(BAR_CELLS).fill("")]);
+    row.height = 16;
+
+    row.getCell(1).font = { size: 10, bold: !theme.startsWith("* "), color: { argb: "FF1F2937" } };
+    row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9FAFB" } };
+    row.getCell(1).alignment = { vertical: "middle", indent: 1 };
+    row.getCell(1).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    row.getCell(2).font = { bold: true, color: { argb: "FF16A34A" }, size: 10 };
+    row.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+    row.getCell(2).alignment = { vertical: "middle", horizontal: "center" };
+    row.getCell(2).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    row.getCell(3).font = { bold: true, color: { argb: "FFDC2626" }, size: 10 };
+    row.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF2F2" } };
+    row.getCell(3).alignment = { vertical: "middle", horizontal: "center" };
+    row.getCell(3).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    for (let i = 0; i < BAR_CELLS; i++) {
+      const cell = row.getCell(BAR_START_COL + i);
+      cell.fill = {
+        type: "pattern", pattern: "solid",
+        fgColor: { argb: i < greenCount ? "FF16A34A" : "FFDC2626" },
+      };
+      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+    }
+
+    row.commit();
+  }
+
+  ws.addRow([]); // spacer between regions
+}
+
 function addSummaryTab(
   wb: ExcelJS.Workbook,
   reviews: ReviewForSheet[],
@@ -240,14 +316,20 @@ function addSummaryTab(
   dateRange: string,
 ) {
   const ws = wb.addWorksheet("Summary", { properties: { tabColor: { argb: "FF1F2937" } } });
+
+  // Cols 1–3 used by both summary and theme section; cols 4–23 are narrow bar cells
   ws.columns = [
-    { header: "Group / Region / Location", key: "name",         width: 36 },
-    { header: "Total Reviews",             key: "total",        width: 16 },
-    { header: "Avg Stars",                 key: "avg",          width: 12 },
-    { header: "Has Response",              key: "responded",    width: 16 },
-    { header: "No Response",               key: "notResponded", width: 16 },
-    { header: "Top Themes",                key: "topThemes",    width: 60 },
+    { header: "Group / Region / Location", key: "name",         width: 30 },
+    { header: "Total Reviews",             key: "total",        width: 14 },
+    { header: "Avg Stars",                 key: "avg",          width: 10 },
+    { header: "Has Response",              key: "responded",    width: 14 },
+    { header: "No Response",               key: "notResponded", width: 14 },
+    { header: "Top Themes",                key: "topThemes",    width: 50 },
   ];
+  // Narrow bar columns (4–23); these are empty in the summary rows above
+  for (let i = BAR_START_COL; i < BAR_START_COL + BAR_CELLS; i++) {
+    ws.getColumn(i).width = 2.2;
+  }
 
   // Title rows
   const titleRow = ws.getRow(1);
@@ -262,7 +344,7 @@ function addSummaryTab(
 
   ws.addRow([]); // spacer
 
-  // ── Group stats header ────────────────────────────────────────────────────
+  // ── Group stats header ──────────────────────────────────────────────────
   const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Avg Stars", "Has Response", "No Response", "Top Themes"]);
   hdr.height = 20;
   hdr.eachCell(cell => {
@@ -272,28 +354,15 @@ function addSummaryTab(
   });
   hdr.commit();
 
-  // Build per-group theme stats (top 3 by mention count, with pos/neg)
-  function themeSummary(groupReviews: ReviewForSheet[]): string {
-    const stats: Record<string, { total: number; pos: number; neg: number }> = {};
-    for (const r of groupReviews) {
-      if (!r.themes || r.themes.length === 0) continue;
-      const isPos = r.starRating >= 4;
-      const isNeg = r.starRating <= 2;
-      for (const theme of r.themes) {
-        if (!stats[theme]) stats[theme] = { total: 0, pos: 0, neg: 0 };
-        stats[theme].total++;
-        if (isPos) stats[theme].pos++;
-        if (isNeg) stats[theme].neg++;
-      }
-    }
-    return Object.entries(stats)
-      .sort((a, b) => b[1].total - a[1].total)
+  // Build per-group text theme summary (existing col F text)
+  function themeSummaryText(groupReviews: ReviewForSheet[]): string {
+    return buildThemeStats(groupReviews)
       .slice(0, 5)
       .map(([theme, s]) => `${theme}: ${s.pos} positive, ${s.neg} negative`)
       .join("  |  ");
   }
 
-  // Build group data
+  // Build groups
   const groups: Record<string, ReviewForSheet[]> = {};
   for (const r of reviews) {
     const key = breakout === "region"
@@ -310,7 +379,7 @@ function addSummaryTab(
     const avg = (groupReviews.reduce((s, r) => s + r.starRating, 0) / total).toFixed(1);
     const responded = groupReviews.filter(r => r.responseText || r.responseAuthor).length;
     const notResponded = total - responded;
-    const summary = themeSummary(groupReviews);
+    const summary = themeSummaryText(groupReviews);
     const dataRow = ws.addRow([key, total, Number(avg), responded, notResponded, summary]);
     dataRow.eachCell((cell, col) => {
       cell.alignment = { vertical: "middle", horizontal: col === 1 || col === 6 ? "left" : "center", wrapText: false };
@@ -325,124 +394,58 @@ function addSummaryTab(
     dataRow.commit();
   }
 
-  ws.views = [{ state: "frozen", ySplit: 4 }];
-}
+  // ── Theme breakdown bars (one section per region) ───────────────────────
+  const hasAnyThemes = reviews.some(r => r.themes && r.themes.length > 0);
+  if (hasAnyThemes) {
+    ws.addRow([]); // spacer
 
-function addThemeChartTab(wb: ExcelJS.Workbook, reviews: ReviewForSheet[], groupLabel: string, dateRange: string) {
-  // Aggregate pos/neg per theme across all reviews
-  const stats: Record<string, { pos: number; neg: number }> = {};
-  for (const r of reviews) {
-    if (!r.themes || r.themes.length === 0) continue;
-    const isPos = r.starRating >= 4;
-    const isNeg = r.starRating <= 2;
-    for (const theme of r.themes) {
-      if (!stats[theme]) stats[theme] = { pos: 0, neg: 0 };
-      if (isPos) stats[theme].pos++;
-      if (isNeg) stats[theme].neg++;
-    }
-  }
-
-  const entries = Object.entries(stats)
-    .sort((a, b) => (b[1].pos + b[1].neg) - (a[1].pos + a[1].neg));
-
-  if (entries.length === 0) return; // skip tab if no themes
-
-  const ws = wb.addWorksheet("Theme Breakdown", { properties: { tabColor: { argb: "FF6366F1" } } });
-
-  const BAR_CELLS = 20; // 20 narrow cells = the bar
-
-  // Set column widths
-  ws.getColumn(1).width = 22; // Theme
-  ws.getColumn(2).width = 10; // Positive
-  ws.getColumn(3).width = 10; // Negative
-  for (let i = 4; i <= 3 + BAR_CELLS; i++) {
-    ws.getColumn(i).width = 2.2;
-  }
-
-  // Title
-  const titleRow = ws.getRow(1);
-  titleRow.getCell(1).value = `Theme Breakdown — ${groupLabel}`;
-  titleRow.getCell(1).font = { bold: true, size: 14, color: { argb: "FF1F2937" } };
-  titleRow.height = 24;
-  titleRow.commit();
-
-  const subRow = ws.addRow([dateRange]);
-  subRow.getCell(1).font = { size: 10, color: { argb: "FF6B7280" }, italic: true };
-  subRow.commit();
-
-  ws.addRow([]); // spacer
-
-  // Header row
-  const hdrValues: any[] = ["Theme", "Positive", "Negative", ...Array(BAR_CELLS).fill("")];
-  const hdr = ws.addRow(hdrValues);
-  hdr.height = 20;
-  hdr.eachCell((cell, col) => {
-    if (col <= 3) {
+    // Section divider
+    const divider = ws.addRow(["Theme Breakdown by Region"]);
+    divider.height = 20;
+    divider.getCell(1).font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    divider.getCell(1).fill = HEADER_BG;
+    for (let c = 1; c <= BAR_START_COL + BAR_CELLS - 1; c++) {
+      const cell = divider.getCell(c);
       cell.fill = HEADER_BG;
-      cell.font = HEADER_FONT;
-      cell.alignment = { vertical: "middle", horizontal: col === 1 ? "left" : "center" };
-    } else {
-      // Bar header area — label it "Sentiment Bar" merged visually via color
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
+      cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };
     }
-    cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };
-  });
-  // Label the bar header area
-  hdr.getCell(4).value = "◀ Sentiment Bar (green = positive, red = negative) ▶";
-  hdr.getCell(4).font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10, italic: true };
-  hdr.commit();
+    // Column sub-headers for the theme section
+    const themeColHdr = ws.addRow(["Theme", "+", "−", ...Array(BAR_CELLS).fill("")]);
+    themeColHdr.height = 16;
+    themeColHdr.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+    themeColHdr.getCell(1).font = { bold: true, size: 10, color: { argb: "FF374151" } };
+    themeColHdr.getCell(1).alignment = { vertical: "middle" };
+    themeColHdr.getCell(2).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD1FAE5" } };
+    themeColHdr.getCell(2).font = { bold: true, size: 10, color: { argb: "FF16A34A" } };
+    themeColHdr.getCell(2).alignment = { vertical: "middle", horizontal: "center" };
+    themeColHdr.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+    themeColHdr.getCell(3).font = { bold: true, size: 10, color: { argb: "FFDC2626" } };
+    themeColHdr.getCell(3).alignment = { vertical: "middle", horizontal: "center" };
+    for (let c = BAR_START_COL; c < BAR_START_COL + BAR_CELLS; c++) {
+      themeColHdr.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
+    }
+    themeColHdr.commit();
+    divider.commit();
 
-  // Data rows
-  for (const [theme, s] of entries) {
-    const total = s.pos + s.neg;
-    const greenCount = total > 0 ? Math.round((s.pos / total) * BAR_CELLS) : 0;
-    const label = theme.startsWith("* ") ? theme.slice(2) + " *" : theme;
+    const REGION_COLORS: Record<string, string> = {
+      "Arizona":       "FFF59E0B",
+      "Maryland":      "FF10B981",
+      "San Francisco": "FF3B82F6",
+    };
 
-    const rowValues: any[] = [label, s.pos, s.neg, ...Array(BAR_CELLS).fill("")];
-    const row = ws.addRow(rowValues);
-    row.height = 18;
-
-    // Theme name cell
-    const nameCell = row.getCell(1);
-    nameCell.font = { size: 11, bold: !theme.startsWith("* "), color: { argb: "FF1F2937" } };
-    nameCell.alignment = { vertical: "middle" };
-    nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9FAFB" } };
-    nameCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-
-    // Pos count
-    const posCell = row.getCell(2);
-    posCell.font = { bold: true, color: { argb: "FF16A34A" }, size: 11 };
-    posCell.alignment = { vertical: "middle", horizontal: "center" };
-    posCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
-    posCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-
-    // Neg count
-    const negCell = row.getCell(3);
-    negCell.font = { bold: true, color: { argb: "FFDC2626" }, size: 11 };
-    negCell.alignment = { vertical: "middle", horizontal: "center" };
-    negCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF2F2" } };
-    negCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-
-    // Bar cells
-    for (let i = 0; i < BAR_CELLS; i++) {
-      const cell = row.getCell(4 + i);
-      const isGreen = i < greenCount;
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: isGreen ? "FF16A34A" : "FFDC2626" },
-      };
-      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+    for (const [key, groupReviews] of Object.entries(groups)) {
+      const themeEntries = buildThemeStats(groupReviews);
+      const color = REGION_COLORS[key] || "FF6366F1";
+      addThemeBarRows(ws, key, themeEntries, color);
     }
 
-    row.commit();
+    // Legend
+    const legend = ws.addRow(["* = AI-discovered theme"]);
+    legend.getCell(1).font = { size: 9, italic: true, color: { argb: "FF9CA3AF" } };
+    legend.commit();
   }
 
-  // Legend row
-  ws.addRow([]);
-  const legendRow = ws.addRow(["* = AI-discovered theme"]);
-  legendRow.getCell(1).font = { size: 9, italic: true, color: { argb: "FF9CA3AF" } };
-  legendRow.commit();
+  ws.views = [{ state: "frozen", ySplit: 4 }];
 }
 
 export async function generateReviewsXlsx(
@@ -455,11 +458,8 @@ export async function generateReviewsXlsx(
   wb.creator = "BizBuddy";
   wb.created = new Date();
 
-  // Always add Summary tab first
+  // Always add Summary tab first (includes theme bars)
   addSummaryTab(wb, reviews, breakout, groupName, dateRange);
-
-  // Theme Breakdown tab (only when theme data exists)
-  addThemeChartTab(wb, reviews, groupName, dateRange);
 
   if (breakout === "none") {
     const ws = wb.addWorksheet("All Reviews", {
