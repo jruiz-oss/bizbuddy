@@ -273,12 +273,12 @@ function addThemeBarRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries
   for (const [theme, s] of themeEntries) {
     const total = s.pos + s.neg;
     const greenCount = total > 0 ? Math.round((s.pos / total) * BAR_CELLS) : 0;
-    const label = theme.startsWith("* ") ? theme.slice(2) + " *" : theme;
+    const label = theme.startsWith("* ") ? theme.slice(2) : theme;
 
     const row = ws.addRow([label, s.pos, s.neg, ...Array(BAR_CELLS).fill("")]);
     row.height = 16;
 
-    row.getCell(1).font = { size: 10, bold: !theme.startsWith("* "), color: { argb: "FF1F2937" } };
+    row.getCell(1).font = { size: 10, bold: true, color: { argb: "FF1F2937" } };
     row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9FAFB" } };
     row.getCell(1).alignment = { vertical: "middle", indent: 1 };
     row.getCell(1).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
@@ -427,10 +427,6 @@ function addSummaryTab(
       addThemeBarRows(ws, key, themeEntries, color);
     }
 
-    // Legend
-    const legend = ws.addRow(["* = AI-discovered theme"]);
-    legend.getCell(1).font = { size: 9, italic: true, color: { argb: "FF9CA3AF" } };
-    legend.commit();
   }
 
   ws.views = [{ state: "frozen", ySplit: 4 }];
