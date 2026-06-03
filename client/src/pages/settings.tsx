@@ -235,7 +235,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     outputFormat: "email" as "email" | "sheet",
     sheetBreakout: "region" as "region" | "location" | "none",
     sheetName: "",
-    themes: [] as string[],
+    themes: "" as string,
     locationIds: [] as string[],
   });
 
@@ -247,7 +247,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
 
   const createGroupMutation = useMutation({
     mutationFn: async (data: typeof newGroup) => {
-      return await apiRequest("POST", "/api/review-email-groups", data);
+      const payload = { ...data, themes: typeof data.themes === "string" ? (data.themes as string).split(",").map((t: string) => t.trim()).filter(Boolean) : data.themes };
+      return await apiRequest("POST", "/api/review-email-groups", payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/review-email-groups"] });
@@ -270,7 +271,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         outputFormat: "email",
         sheetBreakout: "region",
         sheetName: "",
-        themes: [],
+        themes: "",
         locationIds: [],
       });
       toast({
@@ -289,7 +290,11 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
 
   const updateGroupMutation = useMutation({
     mutationFn: async (data: { id: string; updates: Partial<typeof newGroup> }) => {
-      return await apiRequest("PUT", `/api/review-email-groups/${data.id}`, data.updates);
+      const updates = { ...data.updates };
+      if (typeof updates.themes === "string") {
+        (updates as any).themes = (updates.themes as string).split(",").map((t: string) => t.trim()).filter(Boolean);
+      }
+      return await apiRequest("PUT", `/api/review-email-groups/${data.id}`, updates);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/review-email-groups"] });
@@ -765,12 +770,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             <div className="space-y-2">
                               <Label>Review Themes (optional — AI classifies each review by theme)</Label>
                               <Input
-                                value={((editingGroup as any).themes || []).join(", ")}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  const parsed = raw.split(",").map((t: string) => t.trim()).filter(Boolean);
-                                  setEditingGroup({ ...editingGroup, themes: parsed } as any);
-                                }}
+                                value={Array.isArray((editingGroup as any).themes) ? ((editingGroup as any).themes as string[]).join(", ") : ((editingGroup as any).themes || "")}
+                                onChange={(e) => setEditingGroup({ ...editingGroup, themes: e.target.value } as any)}
                                 placeholder="e.g. cleanliness, staff, prices, cool finds"
                                 data-testid={`input-edit-group-themes-${group.id}`}
                               />
@@ -1104,12 +1105,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     <div className="space-y-2">
                       <Label>Review Themes (optional — AI classifies each review by theme)</Label>
                       <Input
-                        value={((newGroup as any).themes || []).join(", ")}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          const parsed = raw.split(",").map((t: string) => t.trim()).filter(Boolean);
-                          setNewGroup({ ...newGroup, themes: parsed } as any);
-                        }}
+                        value={(newGroup as any).themes || ""}
+                        onChange={(e) => setNewGroup({ ...newGroup, themes: e.target.value } as any)}
                         placeholder="e.g. cleanliness, staff, prices, cool finds"
                         data-testid="input-new-group-themes"
                       />
