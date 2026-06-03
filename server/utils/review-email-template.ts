@@ -61,6 +61,63 @@ export function generateLocationCopyHtml(locationName: string, address: string |
   return html;
 }
 
+function generateThemeSummaryHtml(reviews: any[]): string {
+  // Aggregate pos/neg counts per theme across all reviews
+  const stats: Record<string, { pos: number; neg: number }> = {};
+  for (const r of reviews) {
+    if (!r.themes || r.themes.length === 0) continue;
+    const isPos = r.starRating >= 4;
+    const isNeg = r.starRating <= 2;
+    for (const theme of r.themes) {
+      if (!stats[theme]) stats[theme] = { pos: 0, neg: 0 };
+      if (isPos) stats[theme].pos++;
+      if (isNeg) stats[theme].neg++;
+    }
+  }
+
+  const entries = Object.entries(stats)
+    .sort((a, b) => (b[1].pos + b[1].neg) - (a[1].pos + a[1].neg))
+    .slice(0, 8);
+
+  if (entries.length === 0) return '';
+
+  const rows = entries.map(([theme, s]) => {
+    const total = s.pos + s.neg;
+    const posPct = total > 0 ? Math.round((s.pos / total) * 100) : 0;
+    const negPct = 100 - posPct;
+    const label = theme.startsWith('* ') ? theme.slice(2) : theme;
+    const isDiscovered = theme.startsWith('* ');
+
+    return `
+      <tr>
+        <td style="padding: 6px 12px 6px 0; white-space: nowrap; color: #374151; font-size: 13px; font-weight: ${isDiscovered ? 'normal' : '600'}; width: 130px; vertical-align: middle;">
+          ${label}${isDiscovered ? ' <span style="color:#9ca3af;font-size:11px;">(AI)</span>' : ''}
+        </td>
+        <td style="padding: 6px 0; vertical-align: middle;">
+          <div style="display: flex; border-radius: 4px; overflow: hidden; height: 18px; background: #f3f4f6; min-width: 200px;">
+            ${posPct > 0 ? `<div style="width: ${posPct}%; background: #16a34a; height: 100%;"></div>` : ''}
+            ${negPct > 0 ? `<div style="width: ${negPct}%; background: #dc2626; height: 100%;"></div>` : ''}
+          </div>
+        </td>
+        <td style="padding: 6px 0 6px 10px; white-space: nowrap; font-size: 12px; color: #6b7280; vertical-align: middle;">
+          <span style="color: #16a34a; font-weight: 600;">${s.pos}+</span>
+          <span style="color: #9ca3af; margin: 0 2px;">/</span>
+          <span style="color: #dc2626; font-weight: 600;">${s.neg}−</span>
+        </td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div style="margin-bottom: 28px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px 20px; background: #fafafa;">
+      <div style="font-size: 13px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px;">
+        Top Themes
+      </div>
+      <table cellpadding="0" cellspacing="0" border="0" style="width: 100%; border-collapse: collapse;">
+        ${rows}
+      </table>
+    </div>`;
+}
+
 export function generateReviewEmailHtml(
   reviews: any[],
   clientName: string,
@@ -103,6 +160,7 @@ export function generateReviewEmailHtml(
       <p style="color: #6b7280; margin-bottom: 20px;">
         ${dateRangeText}
       </p>
+      ${generateThemeSummaryHtml(reviews)}
   `;
 
   for (const [_key, data] of Object.entries(reviewsByLocation) as [string, { reviews: any[]; name?: string; address?: string }][]) {
