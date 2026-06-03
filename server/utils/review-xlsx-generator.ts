@@ -74,7 +74,7 @@ const DIVIDER_RESPONSE_BG: ExcelJS.Fill = {
 // Cols 1-6: Reviewer block (incl. Themes) | Col 7: spacer | Cols 8-10: Response block
 const COLUMNS: Partial<ExcelJS.Column>[] = [
   { header: "Location",        key: "locationName",    width: 28 },
-  { header: "Stars",           key: "starRating",      width: 8  },
+  { header: "Stars",           key: "starRating",      width: 14 },
   { header: "Reviewer Name",   key: "reviewer",        width: 22 },
   { header: "Review Date",     key: "reviewDate",      width: 14 },
   { header: "Review Text",     key: "reviewText",      width: 52 },
