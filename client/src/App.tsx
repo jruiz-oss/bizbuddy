@@ -37,7 +37,7 @@ interface RouterProps {
 
 function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps) {
   const { currentJobId, jobType } = useJobProgressContext();
-  const { showSelectionModal } = useLocalUserContext();
+  const { showSelectionModal, selectedLocalUser } = useLocalUserContext();
   const { platform, showPlatformModal } = usePlatformContext();
   const [, setLocation] = useLocation();
   const [devMode, setDevMode] = useState(() => localStorage.getItem("bizbuddy_devmode") === "true");
@@ -62,6 +62,15 @@ function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps
       }
     }
   }, [platform, setLocation]);
+
+  // Block access to the app until a user is logged in
+  if (!selectedLocalUser) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <LocalUserSelectionModal open={showSelectionModal} />
+      </div>
+    );
+  }
 
   return (
     <>
