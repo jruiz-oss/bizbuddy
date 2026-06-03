@@ -289,7 +289,7 @@ function addSummaryTab(
     return Object.entries(stats)
       .sort((a, b) => b[1].total - a[1].total)
       .slice(0, 5)
-      .map(([theme, s]) => `${theme}: ${s.total} (${s.pos}↑ ${s.neg}↓)`)
+      .map(([theme, s]) => `${theme}: ${s.pos} positive, ${s.neg} negative`)
       .join("  |  ");
   }
 
