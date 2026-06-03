@@ -328,6 +328,123 @@ function addSummaryTab(
   ws.views = [{ state: "frozen", ySplit: 4 }];
 }
 
+function addThemeChartTab(wb: ExcelJS.Workbook, reviews: ReviewForSheet[], groupLabel: string, dateRange: string) {
+  // Aggregate pos/neg per theme across all reviews
+  const stats: Record<string, { pos: number; neg: number }> = {};
+  for (const r of reviews) {
+    if (!r.themes || r.themes.length === 0) continue;
+    const isPos = r.starRating >= 4;
+    const isNeg = r.starRating <= 2;
+    for (const theme of r.themes) {
+      if (!stats[theme]) stats[theme] = { pos: 0, neg: 0 };
+      if (isPos) stats[theme].pos++;
+      if (isNeg) stats[theme].neg++;
+    }
+  }
+
+  const entries = Object.entries(stats)
+    .sort((a, b) => (b[1].pos + b[1].neg) - (a[1].pos + a[1].neg));
+
+  if (entries.length === 0) return; // skip tab if no themes
+
+  const ws = wb.addWorksheet("Theme Breakdown", { properties: { tabColor: { argb: "FF6366F1" } } });
+
+  const BAR_CELLS = 20; // 20 narrow cells = the bar
+
+  // Set column widths
+  ws.getColumn(1).width = 22; // Theme
+  ws.getColumn(2).width = 10; // Positive
+  ws.getColumn(3).width = 10; // Negative
+  for (let i = 4; i <= 3 + BAR_CELLS; i++) {
+    ws.getColumn(i).width = 2.2;
+  }
+
+  // Title
+  const titleRow = ws.getRow(1);
+  titleRow.getCell(1).value = `Theme Breakdown — ${groupLabel}`;
+  titleRow.getCell(1).font = { bold: true, size: 14, color: { argb: "FF1F2937" } };
+  titleRow.height = 24;
+  titleRow.commit();
+
+  const subRow = ws.addRow([dateRange]);
+  subRow.getCell(1).font = { size: 10, color: { argb: "FF6B7280" }, italic: true };
+  subRow.commit();
+
+  ws.addRow([]); // spacer
+
+  // Header row
+  const hdrValues: any[] = ["Theme", "Positive", "Negative", ...Array(BAR_CELLS).fill("")];
+  const hdr = ws.addRow(hdrValues);
+  hdr.height = 20;
+  hdr.eachCell((cell, col) => {
+    if (col <= 3) {
+      cell.fill = HEADER_BG;
+      cell.font = HEADER_FONT;
+      cell.alignment = { vertical: "middle", horizontal: col === 1 ? "left" : "center" };
+    } else {
+      // Bar header area — label it "Sentiment Bar" merged visually via color
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF374151" } };
+    }
+    cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };
+  });
+  // Label the bar header area
+  hdr.getCell(4).value = "◀ Sentiment Bar (green = positive, red = negative) ▶";
+  hdr.getCell(4).font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10, italic: true };
+  hdr.commit();
+
+  // Data rows
+  for (const [theme, s] of entries) {
+    const total = s.pos + s.neg;
+    const greenCount = total > 0 ? Math.round((s.pos / total) * BAR_CELLS) : 0;
+    const label = theme.startsWith("* ") ? theme.slice(2) + " *" : theme;
+
+    const rowValues: any[] = [label, s.pos, s.neg, ...Array(BAR_CELLS).fill("")];
+    const row = ws.addRow(rowValues);
+    row.height = 18;
+
+    // Theme name cell
+    const nameCell = row.getCell(1);
+    nameCell.font = { size: 11, bold: !theme.startsWith("* "), color: { argb: "FF1F2937" } };
+    nameCell.alignment = { vertical: "middle" };
+    nameCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9FAFB" } };
+    nameCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    // Pos count
+    const posCell = row.getCell(2);
+    posCell.font = { bold: true, color: { argb: "FF16A34A" }, size: 11 };
+    posCell.alignment = { vertical: "middle", horizontal: "center" };
+    posCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+    posCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    // Neg count
+    const negCell = row.getCell(3);
+    negCell.font = { bold: true, color: { argb: "FFDC2626" }, size: 11 };
+    negCell.alignment = { vertical: "middle", horizontal: "center" };
+    negCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF2F2" } };
+    negCell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+
+    // Bar cells
+    for (let i = 0; i < BAR_CELLS; i++) {
+      const cell = row.getCell(4 + i);
+      const isGreen = i < greenCount;
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: isGreen ? "FF16A34A" : "FFDC2626" },
+      };
+      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
+    }
+
+    row.commit();
+  }
+
+  // Legend row
+  ws.addRow([]);
+  const legendRow = ws.addRow(["* = AI-discovered theme"]);
+  legendRow.getCell(1).font = { size: 9, italic: true, color: { argb: "FF9CA3AF" } };
+  legendRow.commit();
+}
+
 export async function generateReviewsXlsx(
   reviews: ReviewForSheet[],
   breakout: "region" | "location" | "none",
@@ -340,6 +457,9 @@ export async function generateReviewsXlsx(
 
   // Always add Summary tab first
   addSummaryTab(wb, reviews, breakout, groupName, dateRange);
+
+  // Theme Breakdown tab (only when theme data exists)
+  addThemeChartTab(wb, reviews, groupName, dateRange);
 
   if (breakout === "none") {
     const ws = wb.addWorksheet("All Reviews", {
