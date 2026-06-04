@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -33,8 +33,6 @@ export function PostCreationModal({ open, onClose, clientId, selectedLocationIds
   const [imageUrl, setImageUrl] = useState("");
   const [imageValidation, setImageValidation] = useState<{ isValid: boolean; width?: number; height?: number; error?: string } | null>(null);
   const [isCheckingImage, setIsCheckingImage] = useState(false);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [selectedLocationIds, setSelectedLocationIds] = useState<Set<string>>(new Set(initialSelectedIds));
   const [folderFilter, setFolderFilter] = useState<string>("all");
@@ -183,51 +181,6 @@ export function PostCreationModal({ open, onClose, clientId, selectedLocationIds
     },
   });
 
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/') || /heic|heif/i.test(file.type)) {
-      toast({
-        title: "Unsupported file",
-        description: "Use JPG, PNG, or GIF (HEIC/HEIF not supported)",
-        variant: "destructive",
-      });
-      e.target.value = "";
-      return;
-    }
-
-    setIsUploadingImage(true);
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
-      formData.append('clientId', clientId);
-
-      const response = await fetch('/api/images/upload', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.message || 'Upload failed');
-      }
-
-      const { url } = await response.json();
-      setImageUrl(url); // existing effect validates dimensions + shows preview
-    } catch (error: any) {
-      toast({
-        title: "Image upload failed",
-        description: error.message || "Something went wrong",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUploadingImage(false);
-      e.target.value = "";
-    }
-  };
 
   const toggleLocation = (locationId: string) => {
     setSelectedLocationIds(prev => {
@@ -458,41 +411,11 @@ export function PostCreationModal({ open, onClose, clientId, selectedLocationIds
             </p>
           </div>
 
-          {/* Photo */}
+          {/* Photo URL */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">
-              Photo (Optional)
+            <Label htmlFor="photo-url" className="text-sm font-medium">
+              Photo URL (Optional)
             </Label>
-            <div className="flex items-center gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploadingImage}
-                data-testid="button-upload-image"
-              >
-                {isUploadingImage ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="w-4 h-4 mr-2" />
-                    Upload Image
-                  </>
-                )}
-              </Button>
-              <span className="text-xs text-muted-foreground">or paste a URL below</span>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/gif"
-              className="hidden"
-              onChange={handleFileSelect}
-              data-testid="input-image-file"
-            />
             <Input
               id="photo-url"
               placeholder="https://storage.googleapis.com/your-image.jpg"

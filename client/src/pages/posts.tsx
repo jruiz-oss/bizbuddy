@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Search, ChevronDown, ChevronUp, Copy, Link, AlertCircle, BarChart3, Clock, History, Settings, MapPin, FileText, MessageSquare, Lightbulb, Star, Share2, Eye, Smartphone, Monitor, Calendar, CheckCircle2, Image as ImageIcon, X, PenLine, Send } from "lucide-react";
+import { Trash2, Search, ChevronDown, ChevronUp, Copy, Link, AlertCircle, BarChart3, Clock, History, Settings, MapPin, FileText, MessageSquare, Lightbulb, Star, Share2, Eye, Smartphone, Monitor, Calendar, CheckCircle2, Image as ImageIcon, X, PenLine, Send, Upload, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -87,6 +87,8 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
   const [buttonType, setButtonType] = useState("LEARN_MORE");
   const [buttonUrl, setButtonUrl] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedLocations, setSelectedLocations] = useState<Set<string>>(new Set());
   const [locationSearch, setLocationSearch] = useState("");
   const [folderFilter, setFolderFilter] = useState<string>("all");
@@ -117,6 +119,52 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
   const [previewDevice, setPreviewDevice] = useState<"mobile" | "desktop">("mobile");
   // UTM section ref to scroll to when "Customize" is clicked
   const utmSectionRef = useRef<HTMLDivElement>(null);
+
+  // Upload a local image to Google Cloud Storage and fill in the public URL
+  const handleImageFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/') || /heic|heif/i.test(file.type)) {
+      toast({
+        title: "Unsupported file",
+        description: "Use JPG, PNG, or GIF (HEIC/HEIF not supported)",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
+
+    setIsUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      if (selectedClientId) formData.append('clientId', selectedClientId);
+
+      const response = await fetch('/api/images/upload', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.message || 'Upload failed');
+      }
+
+      const { url } = await response.json();
+      setImageUrl(url);
+    } catch (error: any) {
+      toast({
+        title: "Image upload failed",
+        description: error.message || "Something went wrong",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploadingImage(false);
+      e.target.value = "";
+    }
+  };
 
   // UTM Builder state
   const [utmBaseUrl, setUtmBaseUrl] = useState("");
@@ -885,11 +933,41 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
                   </div>
                 </div>
 
-                {/* Photo URL */}
+                {/* Photo */}
                 <div>
                   <label className="text-[10px] uppercase tracking-[0.12em] text-gray-500 font-semibold mb-1.5 block">
-                    Photo URL <span className="text-gray-400 normal-case font-medium tracking-normal">(optional)</span>
+                    Photo <span className="text-gray-400 normal-case font-medium tracking-normal">(optional)</span>
                   </label>
+                  <div className="flex items-center gap-2 mb-2">
+                    <button
+                      type="button"
+                      onClick={() => imageFileInputRef.current?.click()}
+                      disabled={isUploadingImage}
+                      className="text-xs font-medium px-3 py-1.5 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 inline-flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      data-testid="button-upload-image"
+                    >
+                      {isUploadingImage ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Uploading...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-3 h-3" />
+                          Upload Image
+                        </>
+                      )}
+                    </button>
+                    <span className="text-[11px] text-gray-400">or paste a URL below</span>
+                  </div>
+                  <input
+                    ref={imageFileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/gif"
+                    className="hidden"
+                    onChange={handleImageFileSelect}
+                    data-testid="input-image-file"
+                  />
                   <Input
                     placeholder="https://storage.googleapis.com/your-image.jpg"
                     value={imageUrl}
