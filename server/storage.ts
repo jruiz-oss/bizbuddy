@@ -2,6 +2,7 @@ import {
   users, clients, clientSettings, clientLocations, jobs, jobItems, activityLog, locationAnalytics, posts,
   locationFolders, locationFolderAssignments, locationTags, locationTagAssignments, localUsers,
   reviewEmailGroups, reviewEmailGroupLocations, appleLocations, locationPerformanceData,
+  inviteCodes,
   dismissedDashboardItems, type DismissedDashboardItem,
   type User, type InsertUser, type Client, type InsertClient, 
   type ClientSettings, type InsertClientSettings,
@@ -19,6 +20,7 @@ import {
   type ReviewEmailGroupLocation,
   type AppleLocation, type InsertAppleLocation,
   type LocationPerformanceData, type InsertLocationPerformanceData,
+  type InviteCode,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, gte, lte, lt, inArray, asc } from "drizzle-orm";
@@ -108,7 +110,14 @@ export interface IStorage {
   createLocalUser(localUser: InsertLocalUser): Promise<LocalUser>;
   updateLocalUser(id: string, localUser: Partial<InsertLocalUser>): Promise<LocalUser>;
   deleteLocalUser(id: string): Promise<void>;
-  
+
+  // Invite Codes
+  createInviteCode(userId: string, code: string, createdByLocalUserId?: string): Promise<InviteCode>;
+  listInviteCodes(userId: string): Promise<InviteCode[]>;
+  getInviteCodeByCode(userId: string, code: string): Promise<InviteCode | undefined>;
+  markInviteCodeUsed(id: string, usedByLocalUserId: string): Promise<void>;
+  revokeInviteCode(id: string): Promise<void>;
+
   // Review Email Groups
   getReviewEmailGroupsByUserId(userId: string): Promise<ReviewEmailGroup[]>;
   getReviewEmailGroup(id: string): Promise<ReviewEmailGroup | undefined>;
@@ -796,6 +805,39 @@ export class DatabaseStorage implements IStorage {
     await db.update(localUsers)
       .set({ isActive: false, updatedAt: new Date() })
       .where(eq(localUsers.id, id));
+  }
+
+  async createInviteCode(userId: string, code: string, createdByLocalUserId?: string): Promise<InviteCode> {
+    const [row] = await db.insert(inviteCodes).values({
+      userId,
+      code,
+      createdByLocalUserId: createdByLocalUserId ?? null,
+    }).returning();
+    return row;
+  }
+
+  async listInviteCodes(userId: string): Promise<InviteCode[]> {
+    return db.select().from(inviteCodes)
+      .where(eq(inviteCodes.userId, userId))
+      .orderBy(desc(inviteCodes.createdAt));
+  }
+
+  async getInviteCodeByCode(userId: string, code: string): Promise<InviteCode | undefined> {
+    const [row] = await db.select().from(inviteCodes)
+      .where(and(eq(inviteCodes.userId, userId), eq(inviteCodes.code, code)));
+    return row;
+  }
+
+  async markInviteCodeUsed(id: string, usedByLocalUserId: string): Promise<void> {
+    await db.update(inviteCodes)
+      .set({ usedByLocalUserId, usedAt: new Date(), isActive: false })
+      .where(eq(inviteCodes.id, id));
+  }
+
+  async revokeInviteCode(id: string): Promise<void> {
+    await db.update(inviteCodes)
+      .set({ isActive: false })
+      .where(eq(inviteCodes.id, id));
   }
 
   async getActivePostsByJobId(jobId: string): Promise<Post[]> {

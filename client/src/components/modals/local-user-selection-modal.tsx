@@ -8,14 +8,23 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useLocalUserContext } from "@/contexts/local-user-context";
-import { User, Plus, Pencil, Trash2, Loader2, Upload, X, RefreshCw, ArrowLeft, Eye, EyeOff } from "lucide-react";
+import { User, Plus, Pencil, Trash2, Loader2, Upload, X, RefreshCw, ArrowLeft, Eye, EyeOff, Ticket, Copy, Check, Ban } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { LocalUser } from "@shared/schema";
 
 // API returns passwordHash stripped, hasPassword added
 type SafeLocalUser = Omit<LocalUser, 'passwordHash'> & { hasPassword: boolean };
 
-type View = 'list' | 'login' | 'setup' | 'create' | 'edit';
+type View = 'list' | 'login' | 'setup' | 'create' | 'edit' | 'invites';
+
+type InviteCode = {
+  id: string;
+  code: string;
+  isActive: boolean;
+  usedAt: string | null;
+  usedByLocalUserId: string | null;
+  createdAt: string;
+};
 
 interface LocalUserSelectionModalProps {
   open: boolean;
@@ -36,18 +45,21 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const [setupEmail, setSetupEmail] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [showSetupPassword, setShowSetupPassword] = useState(false);
+  const [setupInviteCode, setSetupInviteCode] = useState("");
   // profile form
   const [newName, setNewName] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [newProfilePicture, setNewProfilePicture] = useState("");
   const [newRole, setNewRole] = useState<string>("admin");
   const [isUploading, setIsUploading] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetForm = () => {
     setPassword("");
     setSetupEmail("");
     setSetupPassword("");
+    setSetupInviteCode("");
     setShowPassword(false);
     setShowSetupPassword(false);
     setNewName("");
@@ -84,8 +96,8 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   });
 
   const setupMutation = useMutation({
-    mutationFn: async ({ id, email, pwd }: { id: string; email: string; pwd: string }) => {
-      const res = await apiRequest("POST", `/api/local-users/${id}/setup`, { email, password: pwd });
+    mutationFn: async ({ id, email, pwd, inviteCode }: { id: string; email: string; pwd: string; inviteCode: string }) => {
+      const res = await apiRequest("POST", `/api/local-users/${id}/setup`, { email, password: pwd, inviteCode });
       return res.json();
     },
     onSuccess: (user: SafeLocalUser) => {
@@ -147,6 +159,43 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     },
   });
 
+  const { data: inviteCodes = [], refetch: refetchCodes } = useQuery<InviteCode[]>({
+    queryKey: ["/api/invite-codes"],
+    enabled: open && view === 'invites',
+  });
+
+  const generateCodeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/invite-codes", {});
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchCodes();
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to generate code", variant: "destructive" });
+    },
+  });
+
+  const revokeCodeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/invite-codes/${id}`, {});
+    },
+    onSuccess: () => {
+      refetchCodes();
+      toast({ title: "Code revoked" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to revoke code", variant: "destructive" });
+    },
+  });
+
+  const handleCopyCode = (code: InviteCode) => {
+    navigator.clipboard.writeText(code.code);
+    setCopiedId(code.id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -195,11 +244,15 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
       toast({ title: "Error", description: "Email and password are required", variant: "destructive" });
       return;
     }
+    if (!setupInviteCode.trim()) {
+      toast({ title: "Error", description: "Invite code is required", variant: "destructive" });
+      return;
+    }
     if (setupPassword.length < 6) {
       toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
       return;
     }
-    setupMutation.mutate({ id: targetUser.id, email: setupEmail.trim(), pwd: setupPassword });
+    setupMutation.mutate({ id: targetUser.id, email: setupEmail.trim(), pwd: setupPassword, inviteCode: setupInviteCode.trim() });
   };
 
   const handleCreate = () => {
@@ -308,6 +361,11 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
               <Plus className="w-4 h-4 mr-2" />Add Team Member
             </Button>
           )}
+          {canManageUsers(localUsers) && (
+            <Button variant="ghost" className="w-full mt-1 text-muted-foreground" onClick={() => setView('invites')} data-testid="button-invite-codes">
+              <Ticket className="w-4 h-4 mr-2" />Invite Codes
+            </Button>
+          )}
           {isManageMode && (
             <Button className="w-full mt-2" onClick={() => handleCloseModal(false)} data-testid="button-done-managing">Done</Button>
           )}
@@ -401,7 +459,6 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             type={showSetupPassword ? "text" : "password"}
             value={setupPassword}
             onChange={(e) => setSetupPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSetup()}
             placeholder="At least 6 characters"
           />
           <Button
@@ -413,11 +470,24 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           </Button>
         </div>
       </div>
+      <div className="space-y-2">
+        <Label htmlFor="setup-invite-code">Invite code</Label>
+        <Input
+          id="setup-invite-code"
+          type="text"
+          value={setupInviteCode}
+          onChange={(e) => setSetupInviteCode(e.target.value.toUpperCase())}
+          onKeyDown={(e) => e.key === 'Enter' && handleSetup()}
+          placeholder="Enter your invite code"
+          className="uppercase tracking-widest"
+        />
+        <p className="text-xs text-muted-foreground">Ask a super admin for an invite code.</p>
+      </div>
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={() => setView('list')}>
           <ArrowLeft className="w-4 h-4 mr-2" />Back
         </Button>
-        <Button className="flex-1" onClick={handleSetup} disabled={!setupEmail || !setupPassword || setupMutation.isPending}>
+        <Button className="flex-1" onClick={handleSetup} disabled={!setupEmail || !setupPassword || !setupInviteCode || setupMutation.isPending}>
           {setupMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Create Account
         </Button>
@@ -485,12 +555,78 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     </div>
   );
 
+  const renderInvites = () => {
+    const active = inviteCodes.filter(c => c.isActive && !c.usedAt);
+    const used = inviteCodes.filter(c => c.usedAt || !c.isActive);
+    return (
+      <div className="space-y-4">
+        <Button
+          className="w-full"
+          onClick={() => generateCodeMutation.mutate()}
+          disabled={generateCodeMutation.isPending}
+        >
+          {generateCodeMutation.isPending
+            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</>
+            : <><Plus className="w-4 h-4 mr-2" />Generate Invite Code</>}
+        </Button>
+
+        {active.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Active</p>
+            {active.map(code => (
+              <div key={code.id} className="flex items-center gap-2 p-2 rounded-lg border bg-muted/40">
+                <code className="flex-1 font-mono text-sm font-semibold tracking-widest">{code.code}</code>
+                <Button
+                  variant="ghost" size="icon" className="h-7 w-7 shrink-0"
+                  onClick={() => handleCopyCode(code)}
+                  title="Copy"
+                >
+                  {copiedId === code.id ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                </Button>
+                <Button
+                  variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-destructive hover:text-destructive"
+                  onClick={() => revokeCodeMutation.mutate(code.id)}
+                  title="Revoke"
+                >
+                  <Ban className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {active.length === 0 && inviteCodes.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-4">No codes yet. Generate one above.</p>
+        )}
+
+        {used.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Used / Revoked</p>
+            {used.map(code => (
+              <div key={code.id} className="flex items-center gap-2 p-2 rounded-lg border opacity-50">
+                <code className="flex-1 font-mono text-sm tracking-widest line-through">{code.code}</code>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {code.usedAt ? 'Used' : 'Revoked'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Button variant="outline" className="w-full" onClick={() => setView('list')}>
+          <ArrowLeft className="w-4 h-4 mr-2" />Back
+        </Button>
+      </div>
+    );
+  };
+
   const titleMap: Record<View, string> = {
     list: isManageMode ? "Manage Team" : "Who's using the app?",
     login: "Sign In",
     setup: "Create Your Account",
     create: "Add Team Member",
     edit: "Edit Profile",
+    invites: "Invite Codes",
   };
 
   const descMap: Record<View, string> = {
@@ -499,6 +635,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     setup: "First time? Create a password for your account",
     create: "Fill in the details for the new team member",
     edit: "Update profile info",
+    invites: "Generate codes for new team members to set up their accounts",
   };
 
   return (
@@ -526,6 +663,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
               {view === 'setup' && renderSetup()}
               {view === 'create' && renderProfileForm(true)}
               {view === 'edit' && renderProfileForm(false)}
+              {view === 'invites' && renderInvites()}
             </>
           )}
         </div>

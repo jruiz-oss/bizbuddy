@@ -247,6 +247,17 @@ export const localUsers = pgTable("local_users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const inviteCodes = pgTable("invite_codes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  code: text("code").notNull().unique(),
+  createdByLocalUserId: varchar("created_by_local_user_id").references(() => localUsers.id),
+  usedByLocalUserId: varchar("used_by_local_user_id").references(() => localUsers.id),
+  usedAt: timestamp("used_at"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const reviewEmailGroups = pgTable("review_email_groups", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -552,6 +563,11 @@ export const insertLocalUserSchema = createInsertSchema(localUsers).omit({
   updatedAt: true,
 });
 
+export const insertInviteCodeSchema = createInsertSchema(inviteCodes).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertReviewEmailGroupSchema = createInsertSchema(reviewEmailGroups).omit({
   id: true,
   createdAt: true,
@@ -607,6 +623,8 @@ export type InsertReviewEmailGroup = z.infer<typeof insertReviewEmailGroupSchema
 export type ReviewEmailGroupLocation = typeof reviewEmailGroupLocations.$inferSelect;
 export type InsertReviewEmailGroupLocation = z.infer<typeof insertReviewEmailGroupLocationSchema>;
 export type AppleLocation = typeof appleLocations.$inferSelect;
+export type InviteCode = typeof inviteCodes.$inferSelect;
+export type InsertInviteCode = z.infer<typeof insertInviteCodeSchema>;
 export type InsertAppleLocation = z.infer<typeof insertAppleLocationSchema>;
 
 // GBP Performance Historical Data

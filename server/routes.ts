@@ -713,20 +713,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Set up account (email + password) for the first time
   app.post("/api/local-users/:id/setup", async (req, res) => {
     try {
+      const userId = req.session.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
       const localUser = await storage.getLocalUser(req.params.id);
       if (!localUser) {
         return res.status(404).json({ error: 'User not found' });
       }
-      const { email, password } = req.body;
+      // If account already has a password, setup is not allowed via this endpoint
+      if (localUser.passwordHash) {
+        return res.status(400).json({ error: 'Account already set up' });
+      }
+      const { email, password, inviteCode } = req.body;
       if (!email || !password) {
         return res.status(400).json({ error: 'Email and password are required' });
+      }
+      if (!inviteCode) {
+        return res.status(400).json({ error: 'Invite code is required' });
       }
       if (password.length < 6) {
         return res.status(400).json({ error: 'Password must be at least 6 characters' });
       }
+      // Validate invite code
+      const invite = await storage.getInviteCodeByCode(userId, inviteCode.trim());
+      if (!invite || !invite.isActive || invite.usedAt) {
+        return res.status(400).json({ error: 'Invalid or already used invite code' });
+      }
       const passwordHash = hashPassword(password);
       const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
-      res.json(safeLocalUser(updated));
+      // Mark the invite code as used
+      await storage.markInviteCodeUsed(invite.id, req.params.id);
+      // Establish server-side session
+      (req.session as any).localUserId = updated.id;
+      req.session.save((err) => {
+        if (err) console.error('Error saving session on setup:', err);
+        res.json(safeLocalUser(updated));
+      });
     } catch (error) {
       console.error('Error setting up local user account:', error);
       res.status(500).json({ error: 'Setup failed' });
@@ -815,6 +838,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error deleting local user:', error);
       res.status(500).json({ error: 'Failed to delete local user' });
+    }
+  });
+
+  // ── Invite Codes ──────────────────────────────────────────────────────────
+
+  // List invite codes (super_admin only)
+  app.get("/api/invite-codes", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+      const localUserId = getLocalUserId(req);
+      if (!localUserId) return res.status(403).json({ error: 'No local user selected' });
+      const currentUser = await storage.getLocalUser(localUserId);
+      if (!currentUser || currentUser.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only super admins can manage invite codes' });
+      }
+      const codes = await storage.listInviteCodes(userId);
+      res.json(codes);
+    } catch (error) {
+      console.error('Error listing invite codes:', error);
+      res.status(500).json({ error: 'Failed to list invite codes' });
+    }
+  });
+
+  // Generate a new invite code (super_admin only)
+  app.post("/api/invite-codes", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+      const localUserId = getLocalUserId(req);
+      if (!localUserId) return res.status(403).json({ error: 'No local user selected' });
+      const currentUser = await storage.getLocalUser(localUserId);
+      if (!currentUser || currentUser.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only super admins can create invite codes' });
+      }
+      // Generate a random readable code
+      const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const invite = await storage.createInviteCode(userId, code, localUserId);
+      res.status(201).json(invite);
+    } catch (error) {
+      console.error('Error creating invite code:', error);
+      res.status(500).json({ error: 'Failed to create invite code' });
+    }
+  });
+
+  // Revoke an invite code (super_admin only)
+  app.delete("/api/invite-codes/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ error: 'Not authenticated' });
+      const localUserId = getLocalUserId(req);
+      if (!localUserId) return res.status(403).json({ error: 'No local user selected' });
+      const currentUser = await storage.getLocalUser(localUserId);
+      if (!currentUser || currentUser.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only super admins can revoke invite codes' });
+      }
+      await storage.revokeInviteCode(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Error revoking invite code:', error);
+      res.status(500).json({ error: 'Failed to revoke invite code' });
     }
   });
 
