@@ -29,8 +29,10 @@ export function initializeScheduler() {
       const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       
       const scheduledJobs = await db.select().from(jobs).where(
-        eq(jobs.isScheduled, true) &&
-        eq(jobs.status, "scheduled")
+        and(
+          eq(jobs.isScheduled, true),
+          eq(jobs.status, "scheduled")
+        )
       );
       
       // Filter jobs that are due (at or past their scheduled time)
@@ -69,9 +71,22 @@ export function initializeScheduler() {
       
       console.log(`🚀 Processing ${jobsToProcess.length} post(s) at ${currentTime}`);
       
-      // Process each scheduled job
+      // Process each scheduled job. Atomically claim the job first so that an
+      // overlapping cron tick (or a second instance/replica) can't pick up the
+      // same job and double-post to Google. Only the tick that wins the
+      // status flip (scheduled -> running) proceeds.
       for (const job of jobsToProcess) {
         try {
+          const claimed = await db.update(jobs)
+            .set({ status: "running" })
+            .where(and(eq(jobs.id, job.id), eq(jobs.status, "scheduled")))
+            .returning({ id: jobs.id });
+
+          if (claimed.length === 0) {
+            console.log(`⏭️ Job ${job.id} already claimed by another run — skipping`);
+            continue;
+          }
+
           console.log(`📤 Processing scheduled job: ${job.id}`);
           await processJob(job.id);
         } catch (error) {

@@ -1,3 +1,15 @@
+// Escape user-controlled text before interpolating into email HTML.
+// Reviewer names and comments come from Google reviews and are attacker-controlled.
+export function escapeHtml(s: string | undefined | null): string {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function generateStarsHtml(rating: number): string {
   return Array.from({ length: 5 }, (_, i) =>
     i < rating
@@ -94,7 +106,7 @@ export function generateReviewEmailHtml(
     <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
       ${customMessage ? `
       <div style="margin-bottom: 28px;">
-        ${customMessage.replace(/</g, '&lt;').replace(/>/g, '&gt;').split(/\r?\n/).filter((line: string) => line.trim() !== '').map((line: string) => `<p style="color: #1f2937; margin: 0 0 10px 0; line-height: 1.7; font-size: 15px;">${line}</p>`).join('')}
+        ${customMessage.split(/\r?\n/).filter((line: string) => line.trim() !== '').map((line: string) => `<p style="color: #1f2937; margin: 0 0 10px 0; line-height: 1.7; font-size: 15px;">${escapeHtml(line)}</p>`).join('')}
       </div>
       <hr style="border: none; border-top: 1px solid #e5e7eb; margin-bottom: 24px;" />` : ''}
       <div style="color: #1f2937; font-size: 22px; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 16px; line-height: 1.3;">
@@ -131,8 +143,8 @@ export function generateReviewEmailHtml(
     html += `
       <div style="margin-bottom: 30px; border: 2px solid #e5e7eb; border-radius: 12px; padding: 20px;">
         <div style="background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0;">
-          <div style="color: #374151; font-size: 16px; font-weight: bold; line-height: 1.3;">📍 ${data.name || 'Unknown Location'}</div>
-          ${data.address ? `<div style="font-size: 14px; color: #6b7280; margin-top: 4px;">${data.address}</div>` : ''}
+          <div style="color: #374151; font-size: 16px; font-weight: bold; line-height: 1.3;">📍 ${escapeHtml(data.name) || 'Unknown Location'}</div>
+          ${data.address ? `<div style="font-size: 14px; color: #6b7280; margin-top: 4px;">${escapeHtml(data.address)}</div>` : ''}
         </div>
         ${copyLinkHtml}
     `;
@@ -141,7 +153,7 @@ export function generateReviewEmailHtml(
       html += `
         <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #fff;">
           <div style="margin-bottom: 10px;">
-            <strong style="color: #1f2937; font-size: 16px;">${review.reviewer}</strong>
+            <strong style="color: #1f2937; font-size: 16px;">${escapeHtml(review.reviewer)}</strong>
             <div style="margin-top: 4px;">
               ${generateStarsHtml(review.starRating)}
               <span style="color: #6b7280; font-size: 14px; margin-left: 8px;">
@@ -154,7 +166,7 @@ export function generateReviewEmailHtml(
             </div>
           </div>
           ${review.comment
-            ? `<p style="color: #374151; margin: 0; line-height: 1.6; font-style: italic;">"${review.comment}"</p>`
+            ? `<p style="color: #374151; margin: 0; line-height: 1.6; font-style: italic;">"${escapeHtml(review.comment)}"</p>`
             : `<p style="color: #9ca3af; margin: 0; font-style: italic;">No comment provided</p>`
           }
         </div>
@@ -168,8 +180,8 @@ export function generateReviewEmailHtml(
     html += `
       <div style="margin-bottom: 30px; border: 2px solid #e5e7eb; border-radius: 12px; padding: 20px;">
         <div style="color: #374151; font-size: 16px; font-weight: bold; line-height: 1.3; background: #f3f4f6; padding: 12px 16px; border-radius: 8px; margin: 0 0 15px 0;">
-          📍 ${loc.name || 'Unknown Location'}
-          ${loc.address ? `<span style="font-size: 14px; font-weight: normal; color: #6b7280; display: block;">${loc.address}</span>` : ''}
+          📍 ${escapeHtml(loc.name) || 'Unknown Location'}
+          ${loc.address ? `<span style="font-size: 14px; font-weight: normal; color: #6b7280; display: block;">${escapeHtml(loc.address)}</span>` : ''}
         </div>
         <p style="color: #9ca3af; margin: 0; font-size: 14px; font-style: italic;">No new reviews this period.</p>
       </div>

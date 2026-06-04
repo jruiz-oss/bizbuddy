@@ -32,6 +32,16 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
+// Session secret — must be a stable, secret value. A random per-boot value would
+// invalidate every session on restart, and a hardcoded literal is not a secret.
+const sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('SESSION_SECRET environment variable must be set in production.');
+  }
+  console.warn('WARNING: SESSION_SECRET is not set. Using an insecure development-only secret.');
+}
+
 // Session middleware with database persistence
 const PgSession = pgSession(session);
 app.use(
@@ -40,7 +50,7 @@ app.use(
       pool,
       tableName: 'session',
     }),
-    secret: process.env.SESSION_SECRET || 'gbp-manager-secret-key-' + Math.random(),
+    secret: sessionSecret || 'dev-only-insecure-secret-do-not-use-in-production',
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -82,10 +92,6 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
-    if (!process.env.SESSION_SECRET) {
-      console.warn('WARNING: SESSION_SECRET is not set. Using a random value which will invalidate sessions on restart.');
-    }
-
     const server = await registerRoutes(app);
 
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

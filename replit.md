@@ -11,9 +11,9 @@ BizBuddy is a web application for bulk managing Google Business Profiles, allowi
 **Commands:**
 - `npm run dev`: Start development server (frontend and backend).
 - `npm run build`: Build production assets.
-- `npm run typecheck`: Run TypeScript type checking.
-- `npm run db:push --force`: Apply database schema changes (Drizzle Kit).
-- `npx tsx scripts/send-scheduled-emails.ts`: Run scheduled email script (for Replit Scheduled Deployments).
+- `npm run check`: Run TypeScript type checking.
+- Database schema changes: use versioned migrations only — `npm run db:generate` then `npm run db:migrate`. NEVER run `db:push` against production; it has wiped data before. See DATABASE_MIGRATIONS.md.
+- Scheduled review emails are handled in-app by the cron scheduler in `server/scheduler.ts` (no external script).
 
 ## Stack
 
@@ -29,7 +29,7 @@ BizBuddy is a web application for bulk managing Google Business Profiles, allowi
     - `/client/src/components/ui/`: Reusable UI components.
     - `/client/src/pages/`: Page components (e.g., `dashboard.tsx`, `posts.tsx`, `jobs.tsx`, `locations.tsx`).
 - `/server`: Backend source code.
-    - `/server/db/schema.ts`: Database schema definition (source-of-truth).
+    - `/shared/schema.ts`: Database schema definition (source-of-truth, used by Drizzle).
     - `/server/routes.ts`: API endpoints.
     - `/server/google-service-auth.ts`, `/server/google-auth.ts`: Google API authentication and scope definitions.
 - `/shared/schema.ts`: Shared schema definitions (e.g., `clientLocations` and `clients` schema extensions).
@@ -63,7 +63,7 @@ Preferred communication style: Simple, everyday language.
 - **Session Persistence:** Sessions last 7 days; users will need to re-authenticate afterwards.
 - **Geocoding Latency:** Initial geocoding for new locations might have a slight delay due to rate limiting, but sync operations are immediate.
 - **Email Scheduler:** The scheduled email script `scripts/send-scheduled-emails.ts` requires a Replit Scheduled Deployment to run reliably when the app is not actively in use.
-- **Database Schema Updates:** Use `npm run db:push --force` for schema changes, especially after modifying `shared/schema.ts`.
+- **Database Schema Updates:** After modifying `shared/schema.ts`, run `npm run db:generate` to create a migration, then `npm run db:migrate` to apply it. Do NOT use `db:push` — it has wiped production data. See DATABASE_MIGRATIONS.md.
 
 ## Pointers
 

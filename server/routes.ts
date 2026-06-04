@@ -18,9 +18,11 @@ import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
 
-// Helper function to extract local user ID from request headers
+// Resolve the acting local user from the SERVER session (set at login).
+// Never trust the client-supplied X-Local-User-Id header for authorization —
+// it is freely spoofable. The header is ignored here intentionally.
 function getLocalUserId(req: any): string | null {
-  const localUserId = req.headers['x-local-user-id'];
+  const localUserId = req.session?.localUserId;
   return typeof localUserId === 'string' ? localUserId : null;
 }
 
@@ -32,9 +34,16 @@ function hashPassword(password: string): string {
 }
 
 function verifyPassword(password: string, stored: string): boolean {
+  // Defensive: malformed/legacy stored values must fail closed, not throw.
+  if (!stored || !stored.includes(':')) return false;
   const [salt, hash] = stored.split(':');
+  if (!salt || !hash) return false;
   const verify = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(verify, 'hex'));
+  const hashBuf = Buffer.from(hash, 'hex');
+  const verifyBuf = Buffer.from(verify, 'hex');
+  // timingSafeEqual throws on length mismatch — guard it.
+  if (hashBuf.length !== verifyBuf.length) return false;
+  return crypto.timingSafeEqual(hashBuf, verifyBuf);
 }
 
 // Strip passwordHash and add hasPassword for safe API responses
@@ -112,21 +121,45 @@ progressEmitter.on("progress", (progress) => {
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Verification routes
-  app.use("/api/verification", verificationRoutes);
-  
-  // Health check endpoint (no auth required)
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
-  });
-
-  // Auth middleware for protected uploads
+  // Auth middleware for protected uploads / routes.
   const requireAuth = (req: any, res: any, next: any) => {
     if (!req.session?.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
     next();
   };
+
+  // Global API auth gate. Every /api/* route requires an authenticated Google
+  // session (req.session.userId) EXCEPT the public allowlist below. This is the
+  // real server-side enforcement — previously the only protection was per-route
+  // requireAuth applied inconsistently, leaving most routes wide open.
+  // Note: the Google OAuth flow lives at /auth/google(/callback), outside /api.
+  const PUBLIC_API_PATHS = new Set<string>([
+    "/api/health",
+    "/api/auth/status",
+    "/api/auth/logout",
+    "/api/auth/revoke-google",
+    "/api/copy-review", // public share link opened from review emails
+  ]);
+  app.use("/api", (req, res, next) => {
+    // req.path is relative to the "/api" mount point (e.g. "/health").
+    const fullPath = "/api" + req.path.replace(/\/$/, "");
+    if (PUBLIC_API_PATHS.has(fullPath) || PUBLIC_API_PATHS.has("/api" + req.path)) {
+      return next();
+    }
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    next();
+  });
+
+  // Verification routes (now behind the global auth gate above)
+  app.use("/api/verification", verificationRoutes);
+
+  // Health check endpoint (no auth required)
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
 
   // Profile picture upload endpoint (requires authentication - auth runs BEFORE multer)
   // Stores image as a base64 data URL directly in the DB — no external storage needed
@@ -661,7 +694,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!verifyPassword(password, localUser.passwordHash)) {
         return res.status(401).json({ error: 'Incorrect password' });
       }
-      res.json(safeLocalUser(localUser));
+      // Establish the local-user identity server-side. This is the authoritative
+      // source for getLocalUserId() — not the client header or localStorage.
+      (req.session as any).localUserId = localUser.id;
+      req.session.save((err) => {
+        if (err) {
+          console.error('Error saving session on local user login:', err);
+          return res.status(500).json({ error: 'Login failed' });
+        }
+        res.json(safeLocalUser(localUser));
+      });
     } catch (error) {
       console.error('Error logging in local user:', error);
       res.status(500).json({ error: 'Login failed' });
@@ -734,6 +776,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/local-users/:id", async (req, res) => {
     try {
+      // Only the user themselves or a super_admin may edit a profile.
+      const actingUserId = getLocalUserId(req);
+      if (!actingUserId) {
+        return res.status(403).json({ error: 'No local user selected' });
+      }
+      const actingUser = await storage.getLocalUser(actingUserId);
+      if (!actingUser || (actingUser.role !== 'super_admin' && actingUser.id !== req.params.id)) {
+        return res.status(403).json({ error: 'Not authorized to edit this user' });
+      }
       const { name, title, profilePictureUrl } = req.body;
       const localUser = await storage.updateLocalUser(req.params.id, {
         name,
@@ -4842,13 +4893,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
     const text = decode(rawText);
     const richHtml = rawHtml ? decode(rawHtml) : "";
+    // Embed untrusted strings into an inline <script> safely: JSON.stringify does
+    // NOT escape "</script>", which would let a crafted ?data/?html param break
+    // out of the script context. Escaping "<" closes that hole.
+    const jsSafe = (s: string) => JSON.stringify(s).replace(/</g, "\\u003c");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
+    // Block this page from being framed and tighten what inline scripts can load.
+    res.setHeader("X-Frame-Options", "DENY");
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Copy Reviews — BizBuddy</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; background: #f9fafb; display: flex; flex-direction: column; align-items: center; padding: 24px 16px; min-height: 100vh; }
@@ -4886,11 +4944,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   </div>
   <div class="toast" id="toast"></div>
   <script>
-    const plainText = ${JSON.stringify(text)};
-    const richHtml = ${JSON.stringify(richHtml)};
+    const plainText = ${jsSafe(text)};
+    const richHtml = ${jsSafe(richHtml)};
 
+    // Sanitize the rich HTML before inserting it — the ?html param is attacker
+    // controllable, so never assign it to innerHTML unsanitized.
+    const safeHtml = (richHtml && window.DOMPurify)
+      ? window.DOMPurify.sanitize(richHtml)
+      : '';
     // Show the styled preview
-    document.getElementById('preview').innerHTML = richHtml || ('<pre style="white-space:pre-wrap;font-size:13px;color:#374151;">' + plainText.replace(/</g,'&lt;') + '</pre>');
+    document.getElementById('preview').innerHTML = safeHtml || ('<pre style="white-space:pre-wrap;font-size:13px;color:#374151;">' + plainText.replace(/</g,'&lt;') + '</pre>');
 
     const btn = document.getElementById('copyBtn');
     const btnLabel = document.getElementById('copyBtnLabel');
@@ -4936,10 +4999,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     async function doCopy() {
       // Try rich clipboard first (preserves card formatting on desktop & supported mobile).
-      if (richHtml && navigator.clipboard && window.ClipboardItem) {
+      if (safeHtml && navigator.clipboard && window.ClipboardItem) {
         try {
           await navigator.clipboard.write([new ClipboardItem({
-            'text/html': new Blob([richHtml], { type: 'text/html' }),
+            'text/html': new Blob([safeHtml], { type: 'text/html' }),
             'text/plain': new Blob([plainText], { type: 'text/plain' }),
           })]);
           markCopied();

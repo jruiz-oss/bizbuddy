@@ -8,8 +8,12 @@ const router = Router();
 
 // Store CSV in memory temporarily, then save to disk
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB max — prevents unbounded disk writes
+    files: 1,
+  },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
       cb(null, true);
