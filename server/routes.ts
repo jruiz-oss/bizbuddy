@@ -161,6 +161,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Post image upload: file -> Google Cloud Storage (gbp_images bucket) -> public URL.
+  // Images are foldered by client name to match the existing bucket structure.
+  app.post("/api/images/upload", requireAuth, upload.single('image'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      if (!googleStorageService.isConfigured()) {
+        return res.status(503).json({ message: "Google Cloud Storage not configured (GOOGLE_CLOUD_PROJECT_ID missing)" });
+      }
+
+      // Resolve client name for folder placement (optional — falls back to bucket root)
+      let folder: string | undefined;
+      const clientId = req.body?.clientId;
+      if (clientId) {
+        const client = await storage.getClient(clientId);
+        folder = client?.name;
+      }
+
+      const url = await googleStorageService.uploadImage(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+        folder,
+      );
+
+      res.json({ url });
+    } catch (error: any) {
+      console.error("Error uploading image to GCS:", error);
+      res.status(500).json({ message: error.message || "Failed to upload image" });
+    }
+  });
+
   // Profile picture upload endpoint (requires authentication - auth runs BEFORE multer)
   // Stores image as a base64 data URL directly in the DB — no external storage needed
   app.post("/api/upload/profile-picture", requireAuth, profilePictureUpload.single('file'), async (req, res) => {

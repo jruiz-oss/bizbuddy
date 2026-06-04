@@ -1,7 +1,7 @@
 import { Storage } from '@google-cloud/storage';
 
 class GoogleStorageService {
-  private bucketName = 'gbp_management_photos';
+  private bucketName = 'gbp_images';
   private projectId: string | null = null;
 
   constructor() {
@@ -33,7 +33,7 @@ class GoogleStorageService {
     return storage;
   }
 
-  async uploadImage(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
+  async uploadImage(fileBuffer: Buffer, fileName: string, mimeType: string, folder?: string): Promise<string> {
     if (!this.projectId) {
       throw new Error('Google Cloud Storage not configured');
     }
@@ -41,8 +41,13 @@ class GoogleStorageService {
     try {
       const storage = await this.getStorageClient();
       const bucket = storage.bucket(this.bucketName);
-      
-      const uniqueFileName = `${Date.now()}-${fileName}`;
+
+      // Sanitize: strip characters GCS object names can't safely use, keep spaces
+      const safeName = fileName.replace(/[#?\[\]*\r\n]/g, '').replace(/\//g, '-');
+      const safeFolder = folder?.trim().replace(/[#?\[\]*\r\n]/g, '').replace(/\//g, '-');
+      const uniqueFileName = safeFolder
+        ? `${safeFolder}/${Date.now()}-${safeName}`
+        : `${Date.now()}-${safeName}`;
       const file = bucket.file(uniqueFileName);
 
       await file.save(fileBuffer, {
@@ -52,7 +57,8 @@ class GoogleStorageService {
         predefinedAcl: 'publicRead',
       });
 
-      const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${uniqueFileName}`;
+      const encodedPath = uniqueFileName.split('/').map(encodeURIComponent).join('/');
+      const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${encodedPath}`;
       
       console.log(`✅ Image uploaded successfully: ${publicUrl}`);
       
