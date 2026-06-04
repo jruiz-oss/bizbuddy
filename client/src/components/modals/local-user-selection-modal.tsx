@@ -481,7 +481,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           placeholder="Enter your invite code"
           className="uppercase tracking-widest"
         />
-        <p className="text-xs text-muted-foreground">Ask a super admin for an invite code.</p>
+
       </div>
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={() => setView('list')}>

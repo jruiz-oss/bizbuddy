@@ -729,21 +729,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!email || !password) {
         return res.status(400).json({ error: 'Email and password are required' });
       }
-      if (!inviteCode) {
-        return res.status(400).json({ error: 'Invite code is required' });
-      }
       if (password.length < 6) {
         return res.status(400).json({ error: 'Password must be at least 6 characters' });
       }
-      // Validate invite code
-      const invite = await storage.getInviteCodeByCode(userId, inviteCode.trim());
-      if (!invite || !invite.isActive || invite.usedAt) {
-        return res.status(400).json({ error: 'Invalid or already used invite code' });
+      // Super admins can set up their account without an invite code (bootstrap case)
+      const isSuperAdmin = localUser.role === 'super_admin';
+      if (!isSuperAdmin) {
+        if (!inviteCode) {
+          return res.status(400).json({ error: 'Invite code is required' });
+        }
+        // Validate invite code
+        const invite = await storage.getInviteCodeByCode(userId, inviteCode.trim());
+        if (!invite || !invite.isActive || invite.usedAt) {
+          return res.status(400).json({ error: 'Invalid or already used invite code' });
+        }
+        const passwordHash = hashPassword(password);
+        const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
+        await storage.markInviteCodeUsed(invite.id, req.params.id);
+        (req.session as any).localUserId = updated.id;
+        req.session.save((err) => {
+          if (err) console.error('Error saving session on setup:', err);
+          res.json(safeLocalUser(updated));
+        });
+        return;
       }
       const passwordHash = hashPassword(password);
       const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
-      // Mark the invite code as used
-      await storage.markInviteCodeUsed(invite.id, req.params.id);
       // Establish server-side session
       (req.session as any).localUserId = updated.id;
       req.session.save((err) => {
