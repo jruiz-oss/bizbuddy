@@ -6,6 +6,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Loader2 } from "lucide-react";
+import CopyReview from "@/pages/copy-review";
 import Dashboard from "@/pages/dashboard";
 import Locations from "@/pages/locations";
 import Jobs from "@/pages/jobs";
@@ -137,6 +138,11 @@ function AppContent() {
     queryKey: ["/api/auth/status"],
     retry: 1,
   });
+
+  // Public route — accessible without auth (linked from review emails)
+  if (window.location.pathname === "/copy-review") {
+    return <CopyReview />;
+  }
 
   if (isLoading) {
     return (

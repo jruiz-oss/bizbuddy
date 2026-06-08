@@ -124,7 +124,7 @@ export function generateReviewEmailHtml(
       const copyHtml = generateLocationCopyHtml(data.name || 'Unknown Location', data.address, data.reviews);
       const encodedData = Buffer.from(copyText, 'utf8').toString('base64url');
       const encodedHtml = Buffer.from(copyHtml, 'utf8').toString('base64url');
-      const copyUrl = `${appBaseUrl}/api/copy-review?data=${encodedData}&html=${encodedHtml}`;
+      const copyUrl = `${appBaseUrl}/copy-review?data=${encodedData}&html=${encodedHtml}`;
       const mailtoHref = generateLocationMailtoHref(data.name || 'Unknown Location', data.address, data.reviews);
       const btnStyle = 'display:inline-block;background:#001f3f;color:#fff;text-decoration:none;font-size:13px;font-weight:600;padding:8px 16px;border-radius:6px;margin:0 8px 6px 0;line-height:1;mso-padding-alt:0;';
       copyLinkHtml = `
