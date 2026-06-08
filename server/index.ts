@@ -3,7 +3,7 @@ import cors from "cors";
 import session from "express-session";
 import pgSession from "connect-pg-simple";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { serveStatic, log } from "./vite";
 import { pool } from "./db";
 import { initializeScheduler } from "./scheduler";
 
@@ -105,6 +105,9 @@ app.use((req, res, next) => {
     // In production with API_ONLY=true (Railway): skip static files — Vercel handles the frontend
     // In production without API_ONLY (local full build): serve the built frontend
     if (app.get("env") === "development") {
+      // Dynamic import keeps `vite` (a devDependency) out of the production
+      // bundle's static imports — it is only loaded when actually in dev.
+      const { setupVite } = await import("./vite-dev");
       await setupVite(app, server);
     } else if (!process.env.API_ONLY) {
       serveStatic(app);
