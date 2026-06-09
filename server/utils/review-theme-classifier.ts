@@ -40,17 +40,13 @@ export async function classifyReviewThemes(
 
   const prompt = `You are classifying customer reviews by theme.
 
-${userThemesSection}For each review:
-1. Match any of the defined themes above that clearly apply (use exact spelling).
-2. Also identify up to 2 additional themes you notice that are NOT already covered by the defined list. Keep them short (1-3 words). Prefix these with "* " so they're distinguishable.
-
-Only include a theme if there is clear evidence in the review text. Return [] if nothing applies.
+${userThemesSection}For each review, match any of the defined themes above that clearly apply (use exact spelling). Only include a theme if there is clear evidence in the review text. Return [] if nothing applies. Do NOT invent or add themes beyond the defined list.
 
 Reviews:
 ${reviewsText}
 
 Respond with a JSON object where keys are review index numbers (as strings) and values are arrays of theme strings. Example:
-{"0": ["staff", "cleanliness", "* wait time"], "2": ["prices"], "5": ["* parking"]}
+{"0": ["staff", "cleanliness"], "2": ["prices"], "5": []}
 
 Return ONLY the JSON object, no other text.`;
 
@@ -75,14 +71,14 @@ Return ONLY the JSON object, no other text.`;
 
       const valid = matchedThemes.filter(t => {
         if (typeof t !== "string") return false;
-        // Keep user-defined themes (case-insensitive) and AI-discovered ones (prefixed with "* ")
-        return t.startsWith("* ") || validThemesLower.has(t.toLowerCase());
+        // Only keep user-defined themes (case-insensitive)
+        return validThemesLower.has(t.toLowerCase());
       });
 
       if (valid.length > 0) result.set(idx, valid);
     }
 
-    console.log(`🏷️  [Theme classifier] Classified ${reviewsWithComments.length} reviews | defined: [${themes.join(", ")}]`);
+    console.log(`🏷️  [Theme classifier] Classified ${reviewsWithComments.length} reviews against themes: [${themes.join(", ")}]`);
   } catch (err) {
     console.error("❌ [Theme classifier] Failed to classify reviews:", err);
     // Non-fatal — email/sheet still sends without themes

@@ -232,9 +232,6 @@ function deriveRegion(review: ReviewForSheet): string {
   return "Other";
 }
 
-const BAR_CELLS = 20;
-const BAR_START_COL = 7; // columns 7–26 are bar cells (narrow); cols D/E/F stay wide
-
 function buildThemeStats(groupReviews: ReviewForSheet[]): Array<[string, { pos: number; neg: number }]> {
   const stats: Record<string, { pos: number; neg: number }> = {};
   for (const r of groupReviews) {
@@ -250,14 +247,14 @@ function buildThemeStats(groupReviews: ReviewForSheet[]): Array<[string, { pos: 
   return Object.entries(stats).sort((a, b) => (b[1].pos + b[1].neg) - (a[1].pos + a[1].neg));
 }
 
-function addThemeBarRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries: Array<[string, { pos: number; neg: number }]>, regionColor: string) {
+function addThemeRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries: Array<[string, { pos: number; neg: number }]>, regionColor: string) {
   if (themeEntries.length === 0) return;
 
-  // Region header spanning cols 1–3 + bar area
-  const regionHdr = ws.addRow([groupLabel, "", "", ...Array(BAR_CELLS).fill("")]);
+  // Region header spanning cols 1–3
+  const regionHdr = ws.addRow([groupLabel, "", ""]);
   regionHdr.height = 18;
   regionHdr.eachCell((cell, col) => {
-    if (col <= 3 + BAR_CELLS) {
+    if (col <= 3) {
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: regionColor } };
       cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
     }
@@ -265,17 +262,11 @@ function addThemeBarRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries
   regionHdr.getCell(1).value = groupLabel;
   regionHdr.getCell(1).font = { bold: true, size: 11, color: { argb: "FFFFFFFF" } };
   regionHdr.getCell(1).alignment = { vertical: "middle" };
-  regionHdr.getCell(BAR_START_COL).value = "◀  green = positive   red = negative  ▶";
-  regionHdr.getCell(BAR_START_COL).font = { italic: true, size: 9, color: { argb: "FFe5e7eb" } };
   regionHdr.commit();
 
   // Theme rows
   for (const [theme, s] of themeEntries) {
-    const total = s.pos + s.neg;
-    const greenCount = total > 0 ? Math.round((s.pos / total) * BAR_CELLS) : 0;
-    const label = theme.startsWith("* ") ? theme.slice(2) : theme;
-
-    const row = ws.addRow([label, s.pos, s.neg, ...Array(BAR_CELLS).fill("")]);
+    const row = ws.addRow([theme, s.pos, s.neg]);
     row.height = 16;
 
     row.getCell(1).font = { size: 10, bold: true, color: { argb: "FF1F2937" } };
@@ -293,15 +284,6 @@ function addThemeBarRows(ws: ExcelJS.Worksheet, groupLabel: string, themeEntries
     row.getCell(3).alignment = { vertical: "middle", horizontal: "center" };
     row.getCell(3).border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
 
-    for (let i = 0; i < BAR_CELLS; i++) {
-      const cell = row.getCell(BAR_START_COL + i);
-      cell.fill = {
-        type: "pattern", pattern: "solid",
-        fgColor: { argb: i < greenCount ? "FF16A34A" : "FFDC2626" },
-      };
-      cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
-    }
-
     row.commit();
   }
 
@@ -317,7 +299,6 @@ function addSummaryTab(
 ) {
   const ws = wb.addWorksheet("Summary", { properties: { tabColor: { argb: "FF1F2937" } } });
 
-  // Cols 1–6 used by summary; cols 7–26 are narrow bar cells for the theme section
   ws.columns = [
     { header: "Group / Region / Location", key: "name",         width: 30 },
     { header: "Total Reviews",             key: "total",        width: 14 },
@@ -326,10 +307,6 @@ function addSummaryTab(
     { header: "No Response",               key: "notResponded", width: 14 },
     { header: "",                          key: "spacer",       width: 4  },
   ];
-  // Narrow bar columns (7–26); empty in the summary rows above
-  for (let i = BAR_START_COL; i < BAR_START_COL + BAR_CELLS; i++) {
-    ws.getColumn(i).width = 2.2;
-  }
 
   // Title rows
   const titleRow = ws.getRow(1);
@@ -391,14 +368,13 @@ function addSummaryTab(
     const divider = ws.addRow(["Theme Breakdown by Region"]);
     divider.height = 20;
     divider.getCell(1).font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    divider.getCell(1).fill = HEADER_BG;
-    for (let c = 1; c <= BAR_START_COL + BAR_CELLS - 1; c++) {
+    for (let c = 1; c <= 5; c++) {
       const cell = divider.getCell(c);
       cell.fill = HEADER_BG;
       cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };
     }
     // Column sub-headers for the theme section
-    const themeColHdr = ws.addRow(["Theme", "+", "−", ...Array(BAR_CELLS).fill("")]);
+    const themeColHdr = ws.addRow(["Theme", "+", "−"]);
     themeColHdr.height = 16;
     themeColHdr.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
     themeColHdr.getCell(1).font = { bold: true, size: 10, color: { argb: "FF374151" } };
@@ -409,9 +385,6 @@ function addSummaryTab(
     themeColHdr.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
     themeColHdr.getCell(3).font = { bold: true, size: 10, color: { argb: "FFDC2626" } };
     themeColHdr.getCell(3).alignment = { vertical: "middle", horizontal: "center" };
-    for (let c = BAR_START_COL; c < BAR_START_COL + BAR_CELLS; c++) {
-      themeColHdr.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE5E7EB" } };
-    }
     themeColHdr.commit();
     divider.commit();
 
@@ -424,7 +397,7 @@ function addSummaryTab(
     for (const [key, groupReviews] of Object.entries(groups)) {
       const themeEntries = buildThemeStats(groupReviews);
       const color = REGION_COLORS[key] || "FF6366F1";
-      addThemeBarRows(ws, key, themeEntries, color);
+      addThemeRows(ws, key, themeEntries, color);
     }
 
   }
