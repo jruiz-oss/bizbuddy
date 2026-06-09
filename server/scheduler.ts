@@ -644,9 +644,20 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
     const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
     const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
-    // periodEnd shifts back by offset (0 = today, N = N days ago)
-    const periodEnd = new Date(today.getTime() - lookbackOffset * 24 * 60 * 60 * 1000);
-    const periodStart = new Date(periodEnd.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+    // Snap 7-day periods to Mon–Sun calendar weeks.
+    // Find the Monday that starts the most recent complete week:
+    //   dayOfWeek: 0=Sun,1=Mon,...,6=Sat
+    //   daysToEndOfLastWeek: how many days back from today to get to the Monday after last Sunday
+    //     Mon=0 (this week already started), Tue=1, ..., Sun=6 (last Monday was 6 days ago)
+    const todayDayOfWeek = today.getDay(); // 0=Sun
+    const daysToStartOfLastWeek = todayDayOfWeek === 0 ? 6 : todayDayOfWeek - 1;
+    // weekEndMs = midnight of the Monday right after the most recent complete Sun (exclusive upper bound)
+    const weekEndMs = midnightPhoenixMs - daysToStartOfLastWeek * 86400000;
+    // Apply lookbackOffset (in days, expected multiple of 7) to shift to prior weeks
+    const offsetMs = lookbackOffset * 86400000;
+    // periodEnd is exclusive (reviews < periodEnd), periodStart is inclusive (reviews >= periodStart)
+    const periodEnd = new Date(weekEndMs - offsetMs + PHOENIX_OFFSET_MS);
+    const periodStart = new Date(weekEndMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
     
     for (const location of locations) {
       let matchingReviewCount = 0;
@@ -765,10 +776,11 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
 
     // Generate email HTML with all checked locations (even if no reviews)
-    const _midnightTodayPhoenixMs = Math.floor((Date.now() - PHOENIX_OFFSET_MS) / 86400000) * 86400000;
-    // Shift end date back by offset: if offset=0, end is yesterday; if offset=7, end is 7 days ago
-    const _endDate = new Date((_midnightTodayPhoenixMs - (lookbackOffset + 1) * 86400000) + PHOENIX_OFFSET_MS);
-    const _startDate = new Date((_midnightTodayPhoenixMs - (lookbackOffset + lookbackDays) * 86400000) + PHOENIX_OFFSET_MS);
+    // Display dates match the Mon–Sun window used for fetching:
+    // _endDate = last day included (Sunday = weekEndMs - offsetMs - 1 day)
+    // _startDate = first day included (Monday = weekEndMs - offsetMs - lookbackDays)
+    const _endDate = new Date(weekEndMs - offsetMs - 86400000 + PHOENIX_OFFSET_MS);
+    const _startDate = new Date(weekEndMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
     const schedulerDateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
     const emailHtml = generateReviewEmailHtmlTemplate(allReviews, group.name, minStars, maxStars, schedulerDateRange, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
@@ -856,12 +868,8 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     if (outputFormat === 'sheet' && allReviews.length > 0) {
       console.log(`📊 Generating spreadsheet attachment for group "${group.name}"...`);
       const breakout = ((group as any).sheetBreakout || 'region') as 'region' | 'location' | 'none';
-      const nowDate = new Date();
-      const rangeEnd = new Date(nowDate);
-      rangeEnd.setDate(rangeEnd.getDate() - lookbackOffset);
-      const rangeStart = new Date(rangeEnd);
-      rangeStart.setDate(rangeStart.getDate() - lookbackDays);
-      const dateRange = `${rangeStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${rangeEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+      // Use the same Mon–Sun window as the fetch: _startDate (Monday) through _endDate (Sunday)
+      const dateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
       const reviewsForSheet = allReviews.map((r: any) => ({
         locationName: r.locationName || 'Unknown',
         locationAddress: r.locationAddress,
