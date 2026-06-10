@@ -4,6 +4,7 @@ export interface ReviewForSheet {
   locationName: string;
   locationAddress?: string;
   region?: string; // derived from address or tag
+  category?: "Shop" | "Donate" | "Other"; // single bucket → which section the row lands in
   starRating: number;
   reviewer: string;
   reviewDate: string;       // ISO string
@@ -195,24 +196,61 @@ function addReviewsToSheet(ws: ExcelJS.Worksheet, reviews: ReviewForSheet[]) {
   // Freeze top 2 rows
   ws.views = [{ state: "frozen", ySplit: 2 }];
 
-  // Data rows
+  // Data rows — grouped into Shop / Donate / Other sections.
+  // Each review carries a single `category`; uncategorized rows fall into "Other".
+  const CATEGORY_ORDER: Array<ReviewForSheet["category"]> = ["Shop", "Donate", "Other"];
+  const byCategory: Record<string, ReviewForSheet[]> = { Shop: [], Donate: [], Other: [] };
   for (const r of reviews) {
-    const hasResponse = !!(r.responseText || r.responseAuthor);
-    const dataRow = ws.addRow([
-      r.locationName + (r.locationAddress ? `\n${r.locationAddress}` : ""),
-      starsText(r.starRating),
-      r.reviewer,
-      formatDate(r.reviewDate),
-      r.reviewText || "(no comment)",
-      r.themes && r.themes.length > 0 ? r.themes.join(", ") : "",
-      "", // spacer
-      r.responseAuthor || "",
-      formatDate(r.responseDate),
-      r.responseText || (hasResponse ? "" : "No response yet"),
-    ]);
-    applyDataRow(dataRow, hasResponse);
-    dataRow.commit();
+    const cat = r.category && byCategory[r.category] ? r.category : "Other";
+    byCategory[cat].push(r);
   }
+
+  for (const cat of CATEGORY_ORDER) {
+    const group = byCategory[cat!];
+    if (!group || group.length === 0) continue;
+    addCategorySectionHeader(ws, `${cat} (${group.length})`, CATEGORY_COLORS[cat!]);
+    for (const r of group) {
+      const hasResponse = !!(r.responseText || r.responseAuthor);
+      const dataRow = ws.addRow([
+        r.locationName + (r.locationAddress ? `\n${r.locationAddress}` : ""),
+        starsText(r.starRating),
+        r.reviewer,
+        formatDate(r.reviewDate),
+        r.reviewText || "(no comment)",
+        r.themes && r.themes.length > 0 ? r.themes.join(", ") : "",
+        "", // spacer
+        r.responseAuthor || "",
+        formatDate(r.responseDate),
+        r.responseText || (hasResponse ? "" : "No response yet"),
+      ]);
+      applyDataRow(dataRow, hasResponse);
+      dataRow.commit();
+    }
+  }
+}
+
+// Section band colors for the Shop / Donate / Other dividers within a tab.
+const CATEGORY_COLORS: Record<string, string> = {
+  Shop:   "FF7C3AED", // violet-600
+  Donate: "FF0891B2", // cyan-600
+  Other:  "FF6B7280", // gray-500
+};
+
+// Writes a full-width banded header row that introduces a category section.
+function addCategorySectionHeader(ws: ExcelJS.Worksheet, label: string, color: string) {
+  const row = ws.addRow([label, "", "", "", "", "", "", "", "", ""]);
+  row.height = 20;
+  row.eachCell((cell, col) => {
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: color } };
+    cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };
+    if (col === 1) {
+      cell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+    }
+  });
+  // Merge the label across the reviewer block (cols 1–6) for a clean banner.
+  ws.mergeCells(row.number, 1, row.number, 6);
+  row.commit();
 }
 
 function deriveRegion(review: ReviewForSheet): string {

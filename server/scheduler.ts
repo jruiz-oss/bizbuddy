@@ -10,6 +10,7 @@ import { sendEmail, type InlineImage, type EmailAttachment } from "./gmail-servi
 import { generateReviewsXlsx } from "./utils/review-xlsx-generator";
 import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref, generateLocationCopyHtml, generateReviewEmailHtml as generateReviewEmailHtmlTemplate } from "./utils/review-email-template";
 import { classifyReviewThemes } from "./utils/review-theme-classifier";
+import { classifyReviewCategories } from "./utils/review-category-classifier";
 import fs from "fs";
 import path from "path";
 
@@ -756,6 +757,13 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       for (const [idx, themes] of Array.from(themeMap.entries())) {
         allReviews[idx].themes = themes;
       }
+
+      // Category classification — single Shop/Donate/Other bucket per review.
+      // Drives which section of the sheet each row lands in. Uncategorized → "Other".
+      const categoryMap = await classifyReviewCategories(reviewsForClassification);
+      for (let i = 0; i < allReviews.length; i++) {
+        allReviews[i].category = categoryMap.get(i) || "Other";
+      }
     }
 
     // Determine the app base URL for copy links.
@@ -881,6 +889,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         responseDate: r.reviewReply?.updateTime || undefined,
         responseText: r.reviewReply?.comment || undefined,
         themes: r.themes as string[] | undefined,
+        category: r.category as "Shop" | "Donate" | "Other" | undefined,
       }));
       const xlsxBuffer = await generateReviewsXlsx(reviewsForSheet, breakout, group.name, dateRange);
       // Filename: custom sheet name (falls back to group name) + dynamic date range.
