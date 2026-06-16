@@ -42,9 +42,24 @@ class GoogleStorageService {
       const storage = await this.getStorageClient();
       const bucket = storage.bucket(this.bucketName);
 
-      // Sanitize: strip characters GCS object names can't safely use, keep spaces
-      const safeName = fileName.replace(/[#?\[\]*\r\n]/g, '').replace(/\//g, '-');
-      const safeFolder = folder?.trim().replace(/[#?\[\]*\r\n]/g, '').replace(/\//g, '-');
+      // Slugify to safe ASCII so the public URL has no spaces/special chars.
+      // GMB's image fetcher fails on %-encoded spaces and punctuation, so we
+      // strip them entirely rather than rely on URL encoding.
+      const slugify = (input: string): string =>
+        input
+          .normalize('NFKD')
+          .replace(/[̀-ͯ]/g, '')   // drop accents
+          .toLowerCase()
+          .replace(/[^a-z0-9.]+/g, '-')      // anything unsafe -> hyphen (keep dots for ext)
+          .replace(/-+/g, '-')               // collapse repeats
+          .replace(/^-+|-+$/g, '');          // trim leading/trailing
+
+      // Split extension off so the dot before it survives slugify cleanly.
+      const dotIdx = fileName.lastIndexOf('.');
+      const base = dotIdx > 0 ? fileName.slice(0, dotIdx) : fileName;
+      const ext = dotIdx > 0 ? fileName.slice(dotIdx + 1).replace(/[^a-z0-9]/gi, '').toLowerCase() : '';
+      const safeName = ext ? `${slugify(base)}.${ext}` : slugify(base);
+      const safeFolder = folder ? slugify(folder) : undefined;
       const uniqueFileName = safeFolder
         ? `${safeFolder}/${Date.now()}-${safeName}`
         : `${Date.now()}-${safeName}`;
