@@ -4734,7 +4734,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Send manual reviews email — same template as automated, with Copy/Email buttons and optional custom message
   app.post("/api/reviews/send-email", requireAuth, async (req, res) => {
     try {
-      const { to, cc, reviews, minStars, maxStars, startDate, endDate, customMessage, clientName } = req.body;
+      const { to, cc, reviews, allCheckedLocations, minStars, maxStars, startDate, endDate, customMessage, clientName } = req.body;
       if (!to || !reviews || !Array.isArray(reviews)) {
         return res.status(400).json({ success: false, error: "Missing required fields: to, reviews" });
       }
@@ -4767,7 +4767,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         minStars ?? 1,
         maxStars ?? 5,
         dateRangeText,
-        undefined,
+        Array.isArray(allCheckedLocations) ? allCheckedLocations : undefined,
         customMessage || undefined,
         appBaseUrl
       );

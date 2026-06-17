@@ -100,10 +100,25 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
 
   const sendEmailMutation = useMutation({
     mutationFn: async () => {
+      // Build the full list of selected locations with their matching review counts so
+      // the email shows "No new reviews this period." blocks for locations with zero
+      // matches — matching the automated (scheduler) email exactly.
+      const reviewCountByLocation = reviews.reduce<Record<string, number>>((acc, r) => {
+        const key = r.locationName || "";
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+      const allCheckedLocations = selectedLocations.map(l => ({
+        name: l.name,
+        address: l.address || undefined,
+        reviewCount: reviewCountByLocation[l.name] || 0,
+      }));
+
       const response = await apiRequest("POST", "/api/reviews/send-email", {
         to: recipientEmail,
         cc: ccEmail || undefined,
         reviews,
+        allCheckedLocations,
         minStars,
         maxStars,
         startDate: startDate || undefined,
