@@ -4810,10 +4810,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         subject = `${reviews.length} New Review${reviews.length !== 1 ? 's' : ''} — ${starText}${locationPart}`;
       }
 
-      // Load logo for inline attachment (same as automated emails)
-      const logoPath = path.join(process.cwd(), 'client', 'src', 'assets', 'commit-logo.png');
-      const inlineImages = fs.existsSync(logoPath)
-        ? [{ cid: 'commit-logo', path: logoPath, mimeType: 'image/png' as const }]
+      // Load logo for inline CID embedding (same as automated emails)
+      const prodLogoPath = path.join(process.cwd(), 'dist', 'public', 'commit-logo.png');
+      const devLogoPath = path.join(process.cwd(), 'client', 'public', 'commit-logo.png');
+      const logoFilePath = fs.existsSync(prodLogoPath) ? prodLogoPath : devLogoPath;
+      const inlineImages = fs.existsSync(logoFilePath)
+        ? [{
+            cid: 'commit-logo',
+            filename: 'commit-logo.png',
+            mimeType: 'image/png',
+            base64Data: fs.readFileSync(logoFilePath).toString('base64'),
+          }]
         : [];
 
       const toList = (to as string).split(',').map((e: string) => e.trim()).filter(Boolean).join(', ');
