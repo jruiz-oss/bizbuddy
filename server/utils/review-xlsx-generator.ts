@@ -340,6 +340,9 @@ function addSummaryTab(
   ws.columns = [
     { header: "Group / Region / Location", key: "name",         width: 30 },
     { header: "Total Reviews",             key: "total",        width: 14 },
+    { header: "Positive (4-5★)",           key: "positive",     width: 14 },
+    { header: "Neutral (3★)",              key: "neutral",      width: 13 },
+    { header: "Negative (1-2★)",           key: "negative",     width: 14 },
     { header: "Avg Stars",                 key: "avg",          width: 10 },
     { header: "Has Response",              key: "responded",    width: 14 },
     { header: "No Response",               key: "notResponded", width: 14 },
@@ -360,7 +363,7 @@ function addSummaryTab(
   ws.addRow([]); // spacer
 
   // ── Group stats header ──────────────────────────────────────────────────
-  const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Avg Stars", "Has Response", "No Response"]);
+  const hdr = ws.addRow(["Group / Region / Location", "Total Reviews", "Positive (4-5★)", "Neutral (3★)", "Negative (1-2★)", "Avg Stars", "Has Response", "No Response"]);
   hdr.height = 20;
   hdr.eachCell(cell => {
     cell.fill = HEADER_BG;
@@ -383,16 +386,28 @@ function addSummaryTab(
 
   for (const [key, groupReviews] of Object.entries(groups)) {
     const total = groupReviews.length;
+    const positive = groupReviews.filter(r => r.starRating >= 4).length;
+    const neutral  = groupReviews.filter(r => r.starRating === 3).length;
+    const negative = groupReviews.filter(r => r.starRating <= 2).length;
     const avg = (groupReviews.reduce((s, r) => s + r.starRating, 0) / total).toFixed(1);
     const responded = groupReviews.filter(r => r.responseText || r.responseAuthor).length;
     const notResponded = total - responded;
-    const dataRow = ws.addRow([key, total, Number(avg), responded, notResponded]);
+    const dataRow = ws.addRow([key, total, positive, neutral, negative, Number(avg), responded, notResponded]);
     dataRow.eachCell((cell, col) => {
       cell.alignment = { vertical: "middle", horizontal: col === 1 ? "left" : "center", wrapText: false };
       cell.border = { bottom: { style: "thin", color: { argb: "FFE5E7EB" } } };
     });
+    // Color-code the sentiment cells
+    dataRow.getCell(3).font = { bold: true, color: { argb: "FF16A34A" } }; // positive — green
+    dataRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0FDF4" } };
+    dataRow.getCell(4).font = { bold: true, color: { argb: "FFB45309" } }; // neutral — amber
+    dataRow.getCell(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
+    if (negative > 0) {
+      dataRow.getCell(5).font = { bold: true, color: { argb: "FFDC2626" } }; // negative — red
+      dataRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF2F2" } };
+    }
     if (notResponded > 0) {
-      dataRow.getCell(5).font = { bold: true, color: { argb: "FFDC2626" } };
+      dataRow.getCell(8).font = { bold: true, color: { argb: "FFDC2626" } };
     }
     dataRow.commit();
   }
@@ -406,7 +421,7 @@ function addSummaryTab(
     const divider = ws.addRow(["Theme Breakdown by Region"]);
     divider.height = 20;
     divider.getCell(1).font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    for (let c = 1; c <= 5; c++) {
+    for (let c = 1; c <= 8; c++) {
       const cell = divider.getCell(c);
       cell.fill = HEADER_BG;
       cell.border = { bottom: { style: "medium", color: { argb: "FF374151" } } };

@@ -98,9 +98,29 @@ export function generateReviewEmailHtml(
 
   const locationsWithZero = allCheckedLocations?.filter(l => l.reviewCount === 0) || [];
 
+  const positiveCount = reviews.filter(r => r.starRating >= 4).length;
+  const neutralCount  = reviews.filter(r => r.starRating === 3).length;
+  const negativeCount = reviews.filter(r => r.starRating <= 2).length;
+
   const titleText = reviews.length > 0
     ? `${reviews.length} Review${reviews.length !== 1 ? 's' : ''} — ${starText}`
     : `Review Summary — ${starText}`;
+
+  const sentimentSummaryHtml = reviews.length > 0 ? `
+      <div style="display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 100px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; text-align: center;">
+          <div style="font-size: 22px; font-weight: bold; color: #16a34a;">${positiveCount}</div>
+          <div style="font-size: 12px; color: #15803d; margin-top: 2px;">Positive (4-5★)</div>
+        </div>
+        <div style="flex: 1; min-width: 100px; background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; text-align: center;">
+          <div style="font-size: 22px; font-weight: bold; color: #b45309;">${neutralCount}</div>
+          <div style="font-size: 12px; color: #92400e; margin-top: 2px;">Neutral (3★)</div>
+        </div>
+        <div style="flex: 1; min-width: 100px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 16px; text-align: center;">
+          <div style="font-size: 22px; font-weight: bold; color: #dc2626;">${negativeCount}</div>
+          <div style="font-size: 12px; color: #b91c1c; margin-top: 2px;">Negative (1-2★)</div>
+        </div>
+      </div>` : '';
 
   let html = `
     <div style="font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;">
@@ -112,9 +132,10 @@ export function generateReviewEmailHtml(
       <div style="color: #1f2937; font-size: 22px; font-weight: bold; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 16px; line-height: 1.3;">
         ${titleText}
       </div>
-      <p style="color: #6b7280; margin-bottom: 20px;">
+      <p style="color: #6b7280; margin-bottom: 16px;">
         ${dateRangeText}
       </p>
+      ${sentimentSummaryHtml}
   `;
 
   for (const [_key, data] of Object.entries(reviewsByLocation) as [string, { reviews: any[]; name?: string; address?: string }][]) {
