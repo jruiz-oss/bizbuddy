@@ -1,5 +1,4 @@
 import cron from "node-cron";
-import cronParser from "cron-parser";
 import { db } from "./db";
 import { jobs, clients, clientLocations, reviewEmailGroups, reviewEmailGroupLocations, users, locationPerformanceData } from "@shared/schema";
 import { and, eq, inArray, isNotNull, isNull, lt, max, or } from "drizzle-orm";
@@ -209,9 +208,9 @@ export function initializeScheduler() {
   // (e.g. a deploy restart landing exactly on a scheduled send time).
   // Wait 10 s for the DB connection and OAuth tokens to settle first.
   setTimeout(async () => {
-    console.log('🔍 [Startup catch-up] Checking for review emails missed during restart (15-min window)...');
+    console.log('🔍 [Startup catch-up] Checking for review emails due/missed during restart...');
     try {
-      await checkScheduledReviewEmails(15 * 60 * 1000);
+      await checkScheduledReviewEmails();
     } catch (err) {
       console.error('❌ [Startup catch-up] Review email check failed:', err);
     }
@@ -233,101 +232,130 @@ export function initializeScheduler() {
   console.log("✅ Scheduler initialized - checking every minute for scheduled posts and review emails; weekly location sync at 3 AM UTC");
 }
 
-async function checkScheduledReviewEmails(lookbackMs = 60_000) {
+// ---- Date-anchored scheduling helpers (Phoenix time, UTC-7 fixed, no DST) ----
+const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+/** Convert a Phoenix wall-clock (Y, monthIdx, day, hh, mm) to a UTC epoch ms. */
+function phoenixWallToUtcMs(y: number, monthIdx: number, day: number, hh: number, mm: number): number {
+  return Date.UTC(y, monthIdx, day, hh, mm, 0, 0) + PHOENIX_OFFSET_MS;
+}
+
+/** Most recent Phoenix weekday (0=Sun..6=Sat) at hh:mm that is <= nowMs. Only used as a
+ *  fallback anchor for legacy groups created before startDate existed. */
+function mostRecentWeekdayMs(nowMs: number, weekday: number, hh: number, mm: number): number {
+  const p = new Date(nowMs - PHOENIX_OFFSET_MS);
+  for (let back = 0; back < 8; back++) {
+    const candUtc = phoenixWallToUtcMs(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate() - back, hh, mm);
+    const dow = new Date(candUtc - PHOENIX_OFFSET_MS).getUTCDay();
+    if (dow === weekday && candUtc <= nowMs) return candUtc;
+  }
+  return phoenixWallToUtcMs(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate(), hh, mm);
+}
+
+/** The k-th monthly occurrence after the start month, clamped to the month's length
+ *  (e.g. a Jan 31 anchor lands on Feb 28). */
+function monthlyOccurrenceMs(startY: number, startMonthIdx: number, startDay: number, k: number, hh: number, mm: number): number {
+  const total = startMonthIdx + k;
+  const y = startY + Math.floor(total / 12);
+  const m = ((total % 12) + 12) % 12;
+  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return phoenixWallToUtcMs(y, m, Math.min(startDay, daysInMonth), hh, mm);
+}
+
+/**
+ * Most recent scheduled send instant (UTC ms) at or before nowMs, anchored on the group's
+ * startDate + emailTime and repeating by frequency (weekly/biweekly/monthly). Returns null
+ * if the first send hasn't been reached yet — which also enforces "never send before startDate".
+ */
+function computeDueAtMs(group: typeof reviewEmailGroups.$inferSelect, nowMs: number): number | null {
+  const [hhS, mmS] = (group.emailTime || "09:00").split(":");
+  const hh = parseInt(hhS) || 0;
+  const mm = parseInt(mmS) || 0;
+  const frequency = group.frequency || "weekly";
+
+  let firstSendMs: number, sy: number, smIdx: number, sd: number;
+  if (group.startDate) {
+    const [y, mo, d] = group.startDate.split("-").map(Number);
+    sy = y; smIdx = mo - 1; sd = d;
+    firstSendMs = phoenixWallToUtcMs(sy, smIdx, sd, hh, mm);
+  } else {
+    // Legacy group with no startDate: anchor to the configured weekday.
+    firstSendMs = mostRecentWeekdayMs(nowMs, parseInt(group.emailDay) || 1, hh, mm);
+    const p = new Date(firstSendMs - PHOENIX_OFFSET_MS);
+    sy = p.getUTCFullYear(); smIdx = p.getUTCMonth(); sd = p.getUTCDate();
+  }
+
+  if (nowMs < firstSendMs) return null;
+
+  if (frequency === "monthly") {
+    let dueMs = firstSendMs, k = 0;
+    for (;;) {
+      const occ = monthlyOccurrenceMs(sy, smIdx, sd, k + 1, hh, mm);
+      if (occ <= nowMs) { dueMs = occ; k++; } else break;
+    }
+    return dueMs;
+  }
+
+  const periodMs = (frequency === "biweekly" ? 14 : 7) * 86400000;
+  const n = Math.floor((nowMs - firstSendMs) / periodMs);
+  return firstSendMs + n * periodMs;
+}
+
+/**
+ * Runs every minute (and once on startup). Sends any enabled group whose most recent
+ * scheduled occurrence is due and hasn't been sent yet.
+ *
+ * Unlike the previous exact-minute cron match, this is catch-up safe: a delayed cron tick,
+ * a busy event loop during a long send, or a server restart near send time will still fire
+ * the send on the next tick instead of silently skipping the whole period. Idempotence comes
+ * from the atomic claim on lastEmailSentAt rather than from a narrow time window.
+ */
+async function checkScheduledReviewEmails() {
   const now = new Date();
-  
+  const nowMs = now.getTime();
+
   // Get all enabled email groups
   const allGroups = await db.select().from(reviewEmailGroups).where(
     eq(reviewEmailGroups.isEnabled, true)
   );
-  
+
   for (const group of allGroups) {
     if (!group.recipientEmail) continue;
-    
+
     try {
-      // Build cron expression from group settings (emailDay and emailTime).
-      // All three frequencies (weekly, biweekly, monthly) use the same weekly cron —
-      // extra guards below filter out off-weeks and off-months.
-      const [hour, minute] = group.emailTime.split(':');
-      const cronExpression = `${parseInt(minute)} ${parseInt(hour)} * * ${group.emailDay}`;
-      
-      // Parse the cron expression to check if it matches current time
-      const interval = cronParser.CronExpressionParser.parse(cronExpression, {
-        currentDate: now,
-        tz: 'America/Phoenix'
-      });
-      
-      const prevDate = interval.prev().toDate();
-      const timeDiff = Math.abs(now.getTime() - prevDate.getTime());
-      
-      // If within the lookback window (60 s normally; wider on startup catch-up), send
-      if (timeDiff < lookbackMs) {
-        const frequency = group.frequency || 'weekly';
+      const dueAtMs = computeDueAtMs(group, nowMs);
+      if (dueAtMs === null) continue; // first send not reached yet (also covers "before startDate")
 
-        // Start date guard: skip if today (Phoenix) is before the configured start date
-        if (group.startDate) {
-          const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000;
-          const phoenixDate = new Date(now.getTime() - PHOENIX_OFFSET_MS);
-          const todayPhoenix = phoenixDate.toISOString().split('T')[0]; // YYYY-MM-DD
-          if (todayPhoenix < group.startDate) {
-            console.log(`⏭️ Skipping email for "${group.name}" — start date ${group.startDate} has not been reached yet (today: ${todayPhoenix})`);
-            continue;
-          }
-        }
+      const lastMs = group.lastEmailSentAt ? new Date(group.lastEmailSentAt).getTime() : 0;
+      if (lastMs >= dueAtMs) continue; // already sent for this occurrence
 
-        // Bi-weekly: skip if we're within 8 days of the last send (or of startDate for
-        // brand-new groups where lastEmailSentAt hasn't been recorded yet).
-        if (frequency === 'biweekly') {
-          const anchor = group.lastEmailSentAt
-            ?? (group.startDate ? new Date(group.startDate + 'T12:00:00') : null);
-          if (anchor) {
-            const daysSinceLast = (now.getTime() - new Date(anchor).getTime()) / 86400000;
-            if (daysSinceLast >= 0 && daysSinceLast < 8) {
-              console.log(`⏭️ Skipping biweekly email for "${group.name}" — last anchor ${daysSinceLast.toFixed(1)} days ago (off week)`);
-              continue;
-            }
-          }
-        }
+      // Atomic claim: only the first process/instance to flip lastEmailSentAt past the due
+      // instant will send. A concurrent tick or replica gets 0 rows back and skips. This also
+      // prevents double-sends within the same scheduled period.
+      const dueAtDate = new Date(dueAtMs);
+      const claimed = await db.update(reviewEmailGroups)
+        .set({ lastEmailSentAt: now })
+        .where(and(
+          eq(reviewEmailGroups.id, group.id),
+          or(
+            isNull(reviewEmailGroups.lastEmailSentAt),
+            lt(reviewEmailGroups.lastEmailSentAt, dueAtDate)
+          )
+        ))
+        .returning({ id: reviewEmailGroups.id });
 
-        // Monthly: only fire on the first occurrence of the weekday in the month
-        // i.e. when the Phoenix day-of-month is ≤ 7
-        if (frequency === 'monthly') {
-          const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000;
-          const phoenixDate = new Date(now.getTime() - PHOENIX_OFFSET_MS);
-          const dayOfMonth = phoenixDate.getUTCDate();
-          if (dayOfMonth > 7) {
-            console.log(`⏭️ Skipping monthly email for "${group.name}" — day ${dayOfMonth} is not the first occurrence of this weekday`);
-            continue;
-          }
-        }
-        // Atomic claim: only the first process/instance to win this UPDATE will send.
-        // Any concurrent process will get 0 rows back and skip.
-        // The dedupe window matches the lookback so catch-up runs don't double-send.
-        const dedupeWindow = new Date(now.getTime() - lookbackMs);
-        const claimed = await db.update(reviewEmailGroups)
-          .set({ lastEmailSentAt: now })
-          .where(and(
-            eq(reviewEmailGroups.id, group.id),
-            or(
-              isNull(reviewEmailGroups.lastEmailSentAt),
-              lt(reviewEmailGroups.lastEmailSentAt, dedupeWindow)
-            )
-          ))
-          .returning({ id: reviewEmailGroups.id });
-
-        if (claimed.length === 0) {
-          console.log(`⏭️ Skipping duplicate email for group "${group.name}" — already claimed by another process`);
-          continue;
-        }
-
-        console.log(`📧 Sending scheduled review email for group "${group.name}" (${group.id})`);
-        // Fire and forget — do NOT await. Sending can take several minutes for large groups
-        // (sequential Google API calls per location). Awaiting would block all future cron ticks.
-        // The atomic claim above already guarantees only one send per scheduled window.
-        sendScheduledReviewEmailForGroup(group).catch((error) => {
-          console.error(`❌ Uncaught error sending review email for group "${group.name}":`, error);
-        });
+      if (claimed.length === 0) {
+        console.log(`⏭️ Skipping duplicate email for group "${group.name}" — already claimed by another process`);
+        continue;
       }
+
+      console.log(`📧 Sending scheduled review email for group "${group.name}" (${group.id}) — due ${dueAtDate.toISOString()}`);
+      // Fire and forget — do NOT await. Sending can take several minutes for large groups
+      // (sequential Google API calls per location). The atomic claim above already guarantees
+      // only one send per scheduled occurrence.
+      sendScheduledReviewEmailForGroup(group).catch((error) => {
+        console.error(`❌ Uncaught error sending review email for group "${group.name}":`, error);
+      });
     } catch (error) {
       console.error(`❌ Error checking review email schedule for group ${group.id}:`, error);
     }

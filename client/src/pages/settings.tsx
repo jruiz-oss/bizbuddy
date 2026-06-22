@@ -395,6 +395,11 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     return days[parseInt(day)] || "Monday";
   };
 
+  // The send day is derived from the start date (the first send day), so we display it
+  // read-only rather than letting it be picked independently.
+  const getDayNameFromDate = (dateStr?: string) =>
+    dateStr ? getDayName(String(new Date(dateStr + "T12:00:00Z").getUTCDay())) : "—";
+
   return (
     <div className="min-h-screen bg-background flex">
       <SideNav />
@@ -640,15 +645,11 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                               <div className="space-y-2">
-                                <Label>Day</Label>
-                                <Select value={editingGroup.emailDay} onValueChange={(v) => setEditingGroup({ ...editingGroup, emailDay: v })}>
-                                  <SelectTrigger data-testid={`select-edit-group-day-${group.id}`}><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => (
-                                      <SelectItem key={i} value={i.toString()}>{d}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Label>Send Day</Label>
+                                <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground" data-testid={`text-edit-group-day-${group.id}`}>
+                                  {getDayNameFromDate((editingGroup as any).startDate)}
+                                </div>
+                                <p className="text-xs text-muted-foreground">Set by the start date</p>
                               </div>
                               <div className="space-y-2">
                                 <Label>Time</Label>
@@ -668,7 +669,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                 <SelectContent>
                                   <SelectItem value="weekly">Every week</SelectItem>
                                   <SelectItem value="biweekly">Every other week</SelectItem>
-                                  <SelectItem value="monthly">Once a month (first occurrence)</SelectItem>
+                                  <SelectItem value="monthly">Once a month</SelectItem>
                                 </SelectContent>
                               </Select>
                             </div>
@@ -680,7 +681,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                                 onChange={(e) => setEditingGroup({ ...editingGroup, startDate: e.target.value } as any)}
                                 data-testid={`input-edit-group-start-date-${group.id}`}
                               />
-                              <p className="text-xs text-muted-foreground">Emails won't send before this date (Phoenix time)</p>
+                              <p className="text-xs text-muted-foreground">First email sends on this date at the time set, then repeats by frequency (Phoenix time)</p>
                             </div>
                             <div className="space-y-2">
                               <Label>Star Filter: {editingGroup.minStars}-{editingGroup.maxStars} stars</Label>
@@ -928,7 +929,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                             <div className="text-sm text-muted-foreground">
                               <span>
                                 {group.frequency === "monthly"
-                                  ? `Monthly (first ${getDayName(group.emailDay)}) at ${group.emailTime}`
+                                  ? `Monthly at ${group.emailTime}`
                                   : group.frequency === "biweekly"
                                   ? `Every other ${getDayName(group.emailDay)} at ${group.emailTime}`
                                   : `Every ${getDayName(group.emailDay)} at ${group.emailTime}`}
@@ -978,15 +979,11 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label>Day</Label>
-                        <Select value={newGroup.emailDay} onValueChange={(v) => setNewGroup({ ...newGroup, emailDay: v })}>
-                          <SelectTrigger data-testid="select-new-group-day"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((d, i) => (
-                              <SelectItem key={i} value={i.toString()}>{d}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Label>Send Day</Label>
+                        <div className="flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm text-muted-foreground" data-testid="text-new-group-day">
+                          {getDayNameFromDate(newGroup.startDate)}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Set by the start date</p>
                       </div>
                       <div className="space-y-2">
                         <Label>Time</Label>
@@ -1006,7 +1003,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                         <SelectContent>
                           <SelectItem value="weekly">Every week</SelectItem>
                           <SelectItem value="biweekly">Every other week</SelectItem>
-                          <SelectItem value="monthly">Once a month (first occurrence)</SelectItem>
+                          <SelectItem value="monthly">Once a month</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -1018,7 +1015,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                         onChange={(e) => setNewGroup({ ...newGroup, startDate: e.target.value })}
                         data-testid="input-new-group-start-date"
                       />
-                      <p className="text-xs text-muted-foreground">First email won't send before this date (Phoenix time). Defaults to today.</p>
+                      <p className="text-xs text-muted-foreground">First email sends on this date at the time set, then repeats by frequency (Phoenix time). Defaults to today.</p>
                     </div>
                     <div className="space-y-2">
                       <Label>Star Filter</Label>

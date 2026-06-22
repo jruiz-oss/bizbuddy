@@ -4902,7 +4902,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name,
         recipientEmail,
         ccEmail: ccEmail || null,
-        emailDay: emailDay || "1",
+        // Send day is derived from the start date (the first send day). Falls back to the
+        // posted emailDay only for legacy callers that don't send a startDate.
+        emailDay: startDate ? String(new Date(startDate + "T12:00:00Z").getUTCDay()) : (emailDay || "1"),
         emailTime: emailTime || "09:00",
         minStars: minStars || 1,
         maxStars: maxStars || 3,
@@ -4947,7 +4949,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         name,
         recipientEmail,
         ccEmail: ccEmail || null,
-        emailDay,
+        // Keep the stored send day in sync with the start date (the first send day).
+        emailDay: startDate ? String(new Date(startDate + "T12:00:00Z").getUTCDay()) : emailDay,
         emailTime,
         minStars,
         maxStars,
