@@ -141,7 +141,9 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   const { data: history = [] } = useQuery<ActionHistory[]>({
     queryKey: ["/api/suggested-edits/history", { limit: 200 }],
     queryFn: async () => {
-      const response = await fetch("/api/suggested-edits/history?limit=200");
+      const response = await fetch(getApiUrl("/api/suggested-edits/history?limit=200"), {
+        credentials: "include",
+      });
       if (!response.ok) throw new Error("Failed to fetch history");
       return response.json();
     },
@@ -169,7 +171,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       url += "?" + params.toString();
     }
 
-    const eventSource = new EventSource(url);
+    const eventSource = new EventSource(url, { withCredentials: true });
 
     eventSource.addEventListener('start', (event) => {
       const data = JSON.parse(event.data);
