@@ -7,7 +7,7 @@ import crypto from "crypto";
 import verificationRoutes from "./verification-routes";
 import { storage } from "./storage";
 import { sendScheduledReviewEmailForGroup, syncPerfData } from "./scheduler";
-import { insertClientSettingsSchema, insertJobSchema, insertAppleLocationSchema, posts, clients, jobItems, clientLocations, jobs, suggestedEdits, suggestedEditActions, activityLog, locationFolders, users, locationPerformanceData, type InsertClientLocation } from "@shared/schema";
+import { insertClientSettingsSchema, insertJobSchema, insertAppleLocationSchema, posts, clients, jobItems, clientLocations, jobs, suggestedEdits, suggestedEditActions, activityLog, locationFolders, users, googleConnection, locationPerformanceData, type InsertClientLocation } from "@shared/schema";
 import { processJob, progressEmitter } from "./job-processor";
 import { z } from "zod";
 import type { Response } from "express";
@@ -24,6 +24,19 @@ import { generateReviewEmailHtml } from "./utils/review-email-template";
 function getLocalUserId(req: any): string | null {
   const localUserId = req.session?.localUserId;
   return typeof localUserId === 'string' ? localUserId : null;
+}
+
+// This is a single-agency internal tool: everything hangs off ONE Google account
+// (the one that connected Google). Team members are "local users" under it and
+// must NOT have to do Google OAuth themselves. This resolves that one agency
+// Google userId so the local-user login screen works before anyone has a session.
+async function getAgencyUserId(): Promise<string | null> {
+  try {
+    const [conn] = await db.select().from(googleConnection).where(eq(googleConnection.id, 1)).limit(1);
+    if (conn?.connectedByUserId) return conn.connectedByUserId;
+  } catch {}
+  const [u] = await db.select().from(users).limit(1);
+  return u?.id ?? null;
 }
 
 // Password hashing helpers (Node built-in crypto, no extra packages)
@@ -141,16 +154,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/auth/revoke-google",
     "/api/copy-review", // public share link opened from review emails
   ]);
-  app.use("/api", (req, res, next) => {
-    // req.path is relative to the "/api" mount point (e.g. "/health").
-    const fullPath = "/api" + req.path.replace(/\/$/, "");
-    if (PUBLIC_API_PATHS.has(fullPath) || PUBLIC_API_PATHS.has("/api" + req.path)) {
-      return next();
+  // Endpoints a team member needs to pick themselves and log in BEFORE they have
+  // any session. Without these being reachable, a coworker who hasn't done Google
+  // OAuth gets bounced to the Google login — which defeats the shared-connection
+  // design. Matched against the path relative to the /api mount.
+  const isLocalUserBootstrapPath = (req: any): boolean => {
+    const p = req.path.replace(/\/$/, "");
+    if (req.method === "GET" && p === "/local-users") return true;               // list to pick from
+    if (req.method === "GET" && /^\/local-users\/[^/]+$/.test(p)) return true;    // restore saved pick
+    if (req.method === "POST" && /^\/local-users\/[^/]+\/login$/.test(p)) return true;
+    if (req.method === "POST" && /^\/local-users\/[^/]+\/setup$/.test(p)) return true;
+    return false;
+  };
+
+  app.use("/api", async (req, res, next) => {
+    try {
+      // req.path is relative to the "/api" mount point (e.g. "/health").
+      const fullPath = "/api" + req.path.replace(/\/$/, "");
+      if (PUBLIC_API_PATHS.has(fullPath) || PUBLIC_API_PATHS.has("/api" + req.path)) {
+        return next();
+      }
+
+      // A logged-in team member (local user) operates under the agency's single
+      // Google account. Resolve their parent userId so every data-scoped route
+      // works WITHOUT the coworker ever doing Google OAuth themselves.
+      if (!req.session?.userId && req.session?.localUserId) {
+        const lu = await storage.getLocalUser(req.session.localUserId);
+        if (lu?.userId) {
+          req.session.userId = lu.userId;
+        }
+      }
+
+      // Let the local-user login screen load before any session exists.
+      if (isLocalUserBootstrapPath(req)) {
+        return next();
+      }
+
+      if (!req.session?.userId) {
+        return res.status(401).json({ message: "Authentication required" });
+      }
+      next();
+    } catch (err) {
+      console.error("Auth gate error:", err);
+      return res.status(500).json({ message: "Auth check failed" });
     }
-    if (!req.session?.userId) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
-    next();
   });
 
   // Verification routes (now behind the global auth gate above)
@@ -690,9 +737,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Local Users - CRUD endpoints
   app.get("/api/local-users", async (req, res) => {
     try {
-      const userId = req.session.userId;
+      // Fall back to the single agency account so the team-member picker loads
+      // for a coworker who hasn't signed in yet.
+      const userId = req.session.userId ?? await getAgencyUserId();
       if (!userId) {
-        return res.status(401).json({ error: 'Not authenticated' });
+        return res.json([]);
       }
       const localUsers = await storage.getLocalUsersByUserId(userId);
       res.json(localUsers.map(safeLocalUser));
@@ -751,7 +800,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Set up account (email + password) for the first time
   app.post("/api/local-users/:id/setup", async (req, res) => {
     try {
-      const userId = req.session.userId;
+      // Coworkers set up their account before they have a Google session, so
+      // resolve the agency account for invite-code validation below.
+      const userId = req.session.userId ?? await getAgencyUserId();
       if (!userId) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
