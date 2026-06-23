@@ -190,9 +190,9 @@ async function simulateExecution(item: JobItem, job: Job): Promise<void> {
     // Import the Google OAuth service
     const { googleOAuthAuth } = await import("./google-service-auth");
     
-    // Check authentication status and provide helpful error message
-    if (!googleOAuthAuth.isAuthenticated()) {
-      const authError = "Google OAuth authentication required. The system needs to be authenticated with Google Business Profile to update hours. Please ensure the application is properly authenticated with Google OAuth and try again.";
+    // Load the shared Google connection if it isn't in memory yet.
+    if (!(await googleOAuthAuth.ensureAuthenticated())) {
+      const authError = "No shared Google connection. Someone needs to connect Google Business Profile once (any logged-in user) and it will apply to everyone.";
       console.error(`🔒 Authentication error for job item ${item.id}:`, authError);
       throw new Error(authError);
     }

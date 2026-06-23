@@ -29,19 +29,16 @@ class GoogleOAuthAuth {
         defaultCallback
       );
 
-      // Listen for automatic token refreshes and persist the new token to the DB
+      // Listen for automatic token refreshes and persist them to the single shared
+      // connection row. Google usually only returns a new access_token on refresh
+      // (no new refresh_token), so we preserve the existing refresh token in that case.
       this.oauth2Client.on('tokens', async (tokens: any) => {
         if (tokens.access_token) {
           this.accessToken = tokens.access_token;
           if (tokens.refresh_token) this.refreshToken = tokens.refresh_token;
           try {
-            const { db } = await import('./db');
-            const { users } = await import('../shared/schema');
-            const { isNotNull } = await import('drizzle-orm');
-            const updates: Record<string, string> = { accessToken: tokens.access_token };
-            if (tokens.refresh_token) updates.refreshToken = tokens.refresh_token;
-            await db.update(users).set(updates).where(isNotNull(users.accessToken));
-            console.log('🔄 Persisted refreshed access token to DB');
+            await this.saveSharedConnection(this.accessToken!, this.refreshToken);
+            console.log('🔄 Persisted refreshed access token to shared connection');
           } catch (e) {
             console.error('⚠️ Failed to persist refreshed token to DB:', e);
           }
@@ -108,18 +105,17 @@ class GoogleOAuthAuth {
       
       this.accessToken = tokens.access_token || null;
       this.refreshToken = tokens.refresh_token || null;
-      
-      // Initialize API clients with authenticated OAuth client
-      this.mybusinessaccountmanagement = google.mybusinessaccountmanagement({
-        version: 'v1',
-        auth: this.oauth2Client
-      });
 
-      this.mybusinessbusinessinformation = google.mybusinessbusinessinformation({
-        version: 'v1', 
-        auth: this.oauth2Client
-      });
-      
+      // Initialize API clients with authenticated OAuth client
+      this.initApiClients();
+
+      // Persist to the single shared connection row so this login is now active
+      // for everyone (and survives a server restart). connectedBy info is filled
+      // in by the route after it fetches the Google user profile.
+      if (this.accessToken) {
+        await this.saveSharedConnection(this.accessToken, this.refreshToken);
+      }
+
       console.log('✅ OAuth tokens received and API clients initialized');
       return tokens;
     } catch (error) {
@@ -138,22 +134,113 @@ class GoogleOAuthAuth {
         access_token: accessToken,
         refresh_token: refreshToken || undefined
       });
-      
-      // Initialize API clients with restored credentials
-      this.mybusinessaccountmanagement = google.mybusinessaccountmanagement({
-        version: 'v1',
-        auth: this.oauth2Client
-      });
 
-      this.mybusinessbusinessinformation = google.mybusinessbusinessinformation({
-        version: 'v1',
-        auth: this.oauth2Client
-      });
-      
+      // Initialize API clients with restored credentials
+      this.initApiClients();
+
       console.log('✅ OAuth tokens restored from database');
     } catch (error) {
       console.error('❌ Error restoring tokens:', error);
       throw new Error('Failed to restore authentication tokens');
+    }
+  }
+
+  // Initialize the GBP API clients against the current oauth2Client credentials.
+  private initApiClients() {
+    this.mybusinessaccountmanagement = google.mybusinessaccountmanagement({
+      version: 'v1',
+      auth: this.oauth2Client,
+    });
+    this.mybusinessbusinessinformation = google.mybusinessbusinessinformation({
+      version: 'v1',
+      auth: this.oauth2Client,
+    });
+  }
+
+  // Upsert the single shared connection row (id = 1). refreshToken is only
+  // overwritten when a non-empty value is supplied, so an access-token-only
+  // refresh from Google never wipes the long-lived refresh token.
+  async saveSharedConnection(
+    accessToken: string,
+    refreshToken?: string | null,
+    connectedByUserId?: string,
+    connectedEmail?: string,
+  ) {
+    const { db } = await import('./db');
+    const { googleConnection } = await import('../shared/schema');
+
+    const insertValues: Record<string, any> = {
+      id: 1,
+      accessToken,
+      refreshToken: refreshToken ?? null,
+      connectedByUserId: connectedByUserId ?? null,
+      connectedEmail: connectedEmail ?? null,
+      updatedAt: new Date(),
+    };
+
+    const updateValues: Record<string, any> = {
+      accessToken,
+      updatedAt: new Date(),
+    };
+    if (refreshToken) updateValues.refreshToken = refreshToken;
+    if (connectedByUserId) updateValues.connectedByUserId = connectedByUserId;
+    if (connectedEmail) updateValues.connectedEmail = connectedEmail;
+
+    await db
+      .insert(googleConnection)
+      .values(insertValues)
+      .onConflictDoUpdate({ target: googleConnection.id, set: updateValues });
+  }
+
+  // Load the shared connection row into this singleton. Returns true if a usable
+  // connection was loaded. This is the single source of truth for "is the agency
+  // connected to Google" — independent of who is logged into the app.
+  async loadSharedConnection(): Promise<boolean> {
+    try {
+      const { db } = await import('./db');
+      const { googleConnection } = await import('../shared/schema');
+      const { eq } = await import('drizzle-orm');
+
+      const [row] = await db
+        .select()
+        .from(googleConnection)
+        .where(eq(googleConnection.id, 1))
+        .limit(1);
+
+      if (!row?.accessToken) {
+        return false;
+      }
+
+      await this.restoreTokens(row.accessToken, row.refreshToken);
+      console.log('✅ Loaded shared Google connection' + (row.connectedEmail ? ` (connected by ${row.connectedEmail})` : ''));
+      return this.isAuthenticated();
+    } catch (error) {
+      console.error('⚠️ Failed to load shared Google connection:', error);
+      return false;
+    }
+  }
+
+  // Convenience for request handlers and background jobs: make sure the singleton
+  // is authenticated, loading the shared connection from the DB if needed.
+  async ensureAuthenticated(): Promise<boolean> {
+    if (this.isAuthenticated()) return true;
+    return this.loadSharedConnection();
+  }
+
+  // Fully disconnect the shared Google connection for EVERYONE (used by the dev
+  // revoke endpoint). Clears in-memory credentials and the shared DB row.
+  async disconnectShared() {
+    this.logout();
+    try {
+      const { db } = await import('./db');
+      const { googleConnection } = await import('../shared/schema');
+      const { eq } = await import('drizzle-orm');
+      await db
+        .update(googleConnection)
+        .set({ accessToken: null, refreshToken: null, updatedAt: new Date() })
+        .where(eq(googleConnection.id, 1));
+    } catch (e) {
+      console.error('⚠️ Failed to clear shared connection row:', e);
     }
   }
 

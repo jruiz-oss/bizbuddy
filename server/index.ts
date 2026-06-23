@@ -113,6 +113,18 @@ app.use((req, res, next) => {
       serveStatic(app);
     }
 
+    // Load the shared Google connection into memory at boot so a restart never
+    // bounces users back to the OAuth screen and background jobs can run.
+    try {
+      const { googleOAuthAuth } = await import("./google-service-auth");
+      const loaded = await googleOAuthAuth.loadSharedConnection();
+      log(loaded
+        ? "Shared Google connection loaded at startup"
+        : "No shared Google connection yet — first login will set it for everyone");
+    } catch (e) {
+      console.error("Failed to load shared Google connection at startup:", e);
+    }
+
     // Initialize scheduler for scheduled posts, hours, and review emails
     initializeScheduler();
 

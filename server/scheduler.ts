@@ -182,8 +182,8 @@ export function initializeScheduler() {
       }
       try {
         const { googleOAuthAuth } = await import("./google-service-auth");
-        if (!googleOAuthAuth.isAuthenticated()) {
-          console.log("📊 [Perf Sync] Startup catch-up: not yet authenticated — will retry in 30 s");
+        if (!(await googleOAuthAuth.ensureAuthenticated())) {
+          console.log("📊 [Perf Sync] Startup catch-up: no shared Google connection yet — will retry in 30 s");
           continue;
         }
         const [row] = await db.select({ latest: max(locationPerformanceData.date) }).from(locationPerformanceData);
@@ -366,8 +366,8 @@ export async function syncPerfData() {
   console.log("📊 [Perf Sync] Starting GBP performance data sync...");
   try {
     const { googleOAuthAuth } = await import("./google-service-auth");
-    if (!googleOAuthAuth.isAuthenticated()) {
-      console.log("⏭️ [Perf Sync] Skipping — not authenticated");
+    if (!(await googleOAuthAuth.ensureAuthenticated())) {
+      console.log("⏭️ [Perf Sync] Skipping — no shared Google connection");
       return { success: false, reason: "not_authenticated" };
     }
 
@@ -434,23 +434,14 @@ export async function syncPerfData() {
 export async function syncLocationsFromGoogle() {
   const { googleOAuthAuth } = await import("./google-service-auth");
 
-  // Restore tokens from DB if not currently authenticated
-  if (!googleOAuthAuth.isAuthenticated()) {
-    const [user] = await db.select().from(users).where(isNotNull(users.accessToken)).limit(1);
-    if (user?.accessToken) {
-      await googleOAuthAuth.restoreTokens(user.accessToken, user.refreshToken);
-    } else {
-      console.log("⚠️ [Daily Sync] No stored tokens — skipping sync until user logs in.");
-      return;
-    }
-  }
-
-  if (!googleOAuthAuth.isAuthenticated()) {
-    console.log("⚠️ [Daily Sync] Still not authenticated after token restore — skipping.");
+  // Load the shared Google connection if not already in memory.
+  if (!(await googleOAuthAuth.ensureAuthenticated())) {
+    console.log("⚠️ [Daily Sync] No shared Google connection — skipping sync until someone connects Google.");
     return;
   }
 
-  // Find the user whose tokens we just loaded so we can associate locations to them
+  // Determine a user to associate synced locations with. Prefer whoever connected
+  // the shared Google connection; fall back to any user with a token on record.
   const [activeUser] = await db.select().from(users).where(isNotNull(users.accessToken)).limit(1);
   const userId = activeUser?.id;
   if (!userId) {
@@ -629,31 +620,14 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     // Fetch reviews for each location
     const { googleOAuthAuth } = await import("./google-service-auth");
 
-    // Always load the active user upfront — we need their tokens both for GBP
-    // API calls (via googleOAuthAuth) and for sending email via Gmail OAuth.
+    // Load the active user upfront — still needed for sending email via Gmail OAuth.
     const [activeUser] = await db.select().from(users).where(
       isNotNull(users.accessToken)
     ).limit(1);
 
-    // Auto-restore tokens from database if not authenticated
-    if (!googleOAuthAuth.isAuthenticated()) {
-      console.log("🔄 Not authenticated, attempting to restore tokens from database...");
-      try {
-        if (activeUser?.accessToken) {
-          await googleOAuthAuth.restoreTokens(activeUser.accessToken, activeUser.refreshToken);
-          console.log(`✅ Tokens restored from database for user: ${activeUser.email}`);
-        } else {
-          console.log("⚠️ No stored tokens found in database - user needs to log in");
-          return;
-        }
-      } catch (restoreError) {
-        console.error("❌ Failed to restore tokens:", restoreError);
-        return;
-      }
-    }
-
-    if (!googleOAuthAuth.isAuthenticated()) {
-      console.log("⚠️ Still not authenticated after token restore attempt");
+    // GBP API calls use the shared Google connection — load it if needed.
+    if (!(await googleOAuthAuth.ensureAuthenticated())) {
+      console.log("⚠️ No shared Google connection — skipping review emails until someone connects Google.");
       return;
     }
     

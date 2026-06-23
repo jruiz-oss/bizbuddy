@@ -26,6 +26,20 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Single shared Google Business Profile connection for the whole agency.
+// There is exactly ONE row (id = 1). When any team member connects Google, the
+// tokens land here and every user + background job reads from this row. This is
+// what makes "one person logs in and it's set for everyone" true, and what keeps
+// a server restart from bouncing people back to the OAuth screen.
+export const googleConnection = pgTable("google_connection", {
+  id: integer("id").primaryKey().default(1),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  connectedByUserId: varchar("connected_by_user_id").references(() => users.id),
+  connectedEmail: text("connected_email"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const clients = pgTable("clients", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -478,6 +492,11 @@ export const insertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
   updatedAt: true,
 });
+
+export const insertGoogleConnectionSchema = createInsertSchema(googleConnection).omit({
+  updatedAt: true,
+});
+export type GoogleConnection = typeof googleConnection.$inferSelect;
 
 export const insertClientSchema = createInsertSchema(clients).omit({
   id: true,

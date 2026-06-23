@@ -485,10 +485,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
       
+      // Persist to the single shared connection so this login is now active for
+      // the whole team and survives restarts. Records who connected it.
+      if (tokens.access_token) {
+        await googleOAuthAuth.saveSharedConnection(
+          tokens.access_token,
+          tokens.refresh_token,
+          user.id,
+          user.email,
+        );
+      }
+
       // Store user ID in session
       req.session.userId = user.id;
       req.session.googleId = user.googleId;
-      
+
       // Clear the stored OAuth origin
       delete (req.session as any).oauthOrigin;
       
@@ -507,19 +518,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/auth/status", async (req, res) => {
     try {
       const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      // If not authenticated but we have a session, try to restore tokens
-      if (!googleOAuthAuth.isAuthenticated() && req.session.userId) {
-        const user = await storage.getUser(req.session.userId);
-        
-        if (user?.accessToken && user?.refreshToken) {
-          console.log('🔄 Restoring OAuth tokens from database for user:', user.email);
-          await googleOAuthAuth.restoreTokens(user.accessToken, user.refreshToken);
-        }
-      }
-      
-      const authenticated = googleOAuthAuth.isAuthenticated();
-      console.log('🔍 Auth status - custom OAuth:', authenticated, 'Session userId:', req.session.userId);
+
+      // The Google connection is shared across the whole team and lives in a
+      // single DB row — NOT on the requesting user's session. Load it if the
+      // in-memory singleton isn't populated yet (e.g. right after a restart).
+      const authenticated = await googleOAuthAuth.ensureAuthenticated();
+      console.log('🔍 Auth status - shared Google connection:', authenticated, 'Session userId:', req.session.userId);
       res.json({ authenticated });
     } catch (error) {
       console.error('Auth status error:', error);
@@ -529,16 +533,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/logout", async (req, res) => {
     try {
-      const { googleOAuthAuth } = await import("./google-service-auth");
-      googleOAuthAuth.logout();
-      
-      // Destroy session
+      // Only end THIS user's app session. The Google connection is shared by the
+      // whole team, so logging out of BizBuddy must NOT disconnect Google for
+      // everyone else. Use /api/auth/revoke-google to disconnect Google itself.
       req.session.destroy((err) => {
         if (err) {
           console.error('Session destroy error:', err);
         }
       });
-      
+
       res.json({ success: true, message: 'Logged out successfully. Please sign in again.' });
     } catch (error) {
       console.error('Logout error:', error);
@@ -550,18 +553,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/auth/revoke-google", async (req, res) => {
     try {
       const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      // 1. Clear tokens from memory
-      googleOAuthAuth.logout();
-      
-      // 2. Also clear tokens from the database so the auto-restore can't repopulate them
+
+      // Disconnect the shared Google connection for the whole team: clears the
+      // in-memory singleton AND the shared DB row so auto-restore can't repopulate.
+      await googleOAuthAuth.disconnectShared();
+
+      // Also clear any legacy per-user tokens so they can't seed the connection again.
       const userId = req.session.userId;
       if (userId) {
         await storage.updateUser(userId, { accessToken: null as any, refreshToken: null as any });
         console.log('🔧 [DEV] Google auth tokens wiped from DB for user:', userId);
       }
-      
-      console.log('🔧 [DEV] Google auth revoked — session preserved, tokens gone from memory + DB');
+
+      console.log('🔧 [DEV] Shared Google connection revoked — session preserved, tokens gone from memory + DB');
       res.json({ success: true, message: 'Google authentication revoked. App session preserved.' });
     } catch (error) {
       console.error('Revoke error:', error);
