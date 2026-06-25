@@ -227,25 +227,44 @@ async function simulateExecution(item: JobItem, job: Job): Promise<void> {
       if (!postData) {
         throw new Error("Post data not found in job item payload");
       }
-      
-      const postResult = await googleOAuthAuth.createPost(gbpLocationName, postData);
-      console.log(`✅ Successfully created post for location: ${locationTitle}`);
-      
-      // Store the post ID in the database
-      if (postResult.success && postResult.name) {
-        await storage.createPost({
-          jobId: job.id,
-          jobItemId: item.id,
-          clientLocationId: item.clientLocationId,
-          gbpPostName: postResult.name,
-          summary: postData.summary,
-          status: "active"
-        });
-        console.log(`📝 Stored post record: ${postResult.name}`);
+
+      // Idempotency guard: if a post was already created for this job item
+      // (e.g. a previous attempt succeeded on Google but then failed before the
+      // item was marked complete, or the item is being reprocessed), do NOT
+      // call Google again. This prevents duplicate posts on retries/re-runs.
+      const existingPost = await storage.getPostByJobItemId(item.id);
+      if (existingPost) {
+        console.log(`⏭️ Post already exists for job item ${item.id} (${existingPost.gbpPostName}) — skipping to avoid duplicate`);
+        return;
       }
 
-      // Stamp activity timestamp on the location
-      await storage.updateLocation(item.clientLocationId, { lastPostAt: new Date() });
+      const postResult = await googleOAuthAuth.createPost(gbpLocationName, postData);
+      console.log(`✅ Successfully created post for location: ${locationTitle}`);
+
+      // The post is now LIVE on Google. From here on, any failure must NOT
+      // propagate — if it did, processJobItem would retry and call createPost
+      // again, double-posting. So we record the result and stamp the location
+      // in a guarded block that never rethrows.
+      try {
+        if (postResult.success && postResult.name) {
+          await storage.createPost({
+            jobId: job.id,
+            jobItemId: item.id,
+            clientLocationId: item.clientLocationId,
+            gbpPostName: postResult.name,
+            summary: postData.summary,
+            status: "active"
+          });
+          console.log(`📝 Stored post record: ${postResult.name}`);
+        }
+
+        // Stamp activity timestamp on the location
+        await storage.updateLocation(item.clientLocationId, { lastPostAt: new Date() });
+      } catch (postSaveError) {
+        // Do not rethrow: the Google post already succeeded. Re-throwing here
+        // would trigger a retry and create a duplicate post.
+        console.error(`⚠️ Post for item ${item.id} went live on Google but bookkeeping failed (not retrying to avoid a duplicate):`, postSaveError);
+      }
     } else if (job.type === "photo") {
       // Stamp photo activity timestamp
       await storage.updateLocation(item.clientLocationId, { lastPhotoAt: new Date() });

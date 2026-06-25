@@ -75,6 +75,7 @@ export interface IStorage {
   
   // Posts
   getPostsByJobId(jobId: string): Promise<Post[]>;
+  getPostByJobItemId(jobItemId: string): Promise<Post | undefined>;
   getPostsByClientId(clientId: string, limit?: number): Promise<Post[]>;
   createPost(post: InsertPost): Promise<Post>;
   deletePost(id: string, deletedBy?: string): Promise<void>;
@@ -544,6 +545,11 @@ export class DatabaseStorage implements IStorage {
 
   async getPostsByJobId(jobId: string): Promise<Post[]> {
     return await db.select().from(posts).where(eq(posts.jobId, jobId));
+  }
+
+  async getPostByJobItemId(jobItemId: string): Promise<Post | undefined> {
+    const [post] = await db.select().from(posts).where(eq(posts.jobItemId, jobItemId));
+    return post || undefined;
   }
 
   async getPostsByClientId(clientId: string, limit = 150): Promise<any[]> {
