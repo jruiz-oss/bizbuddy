@@ -65,6 +65,74 @@ function safeLocalUser(user: any) {
   return { ...rest, hasPassword: !!passwordHash };
 }
 
+// ── Brute-force protection (in-memory, no extra packages) ────────────────────
+// Lightweight rate limiter keyed by "bucket:identifier" (e.g. IP + account id).
+// Good enough for this single-instance internal tool. If this ever runs on more
+// than one instance, move this state into Postgres/Redis so limits are shared.
+type RateState = { count: number; resetAt: number; blockedUntil: number };
+const rateBuckets = new Map<string, RateState>();
+
+function clientIp(req: any): string {
+  return String(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+
+// Returns { ok: false, retryAfterSec } when the caller should be throttled.
+function rateLimit(
+  key: string,
+  opts: { max: number; windowMs: number; blockMs: number },
+): { ok: boolean; retryAfterSec?: number } {
+  const now = Date.now();
+  let s = rateBuckets.get(key);
+  if (s && s.blockedUntil > now) {
+    return { ok: false, retryAfterSec: Math.ceil((s.blockedUntil - now) / 1000) };
+  }
+  if (!s || now > s.resetAt) {
+    s = { count: 0, resetAt: now + opts.windowMs, blockedUntil: 0 };
+    rateBuckets.set(key, s);
+  }
+  s.count++;
+  if (s.count > opts.max) {
+    s.blockedUntil = now + opts.blockMs;
+    return { ok: false, retryAfterSec: Math.ceil(opts.blockMs / 1000) };
+  }
+  return { ok: true };
+}
+
+function clearRateLimit(key: string): void {
+  rateBuckets.delete(key);
+}
+
+// Bound memory: drop expired/unblocked buckets every 10 minutes.
+const _rateCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [k, s] of Array.from(rateBuckets.entries())) {
+    if (now > s.resetAt && now > s.blockedUntil) rateBuckets.delete(k);
+  }
+}, 10 * 60 * 1000);
+_rateCleanup.unref?.();
+
+// ── Password policy ──────────────────────────────────────────────────────────
+// A small block list of the most-guessed passwords. Not exhaustive, but it stops
+// the obvious ones (the brute-force limiter handles the rest).
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password123', 'passw0rd', '12345678', '123456789',
+  '1234567890', 'qwerty', 'qwerty123', 'letmein', 'welcome', 'welcome1',
+  'admin', 'admin123', 'iloveyou', 'abc12345', 'changeme', 'monkey',
+  'football', 'baseball', 'dragon', 'sunshine', 'princess', 'whatever',
+  'trustno1', '11111111', '00000000', 'bizbuddy', 'commit123',
+]);
+
+// Returns an error string if the password is unacceptable, or null if it's fine.
+function validatePassword(password: unknown): string | null {
+  if (typeof password !== 'string') return 'Password is required';
+  if (password.length < 10) return 'Password must be at least 10 characters';
+  if (password.length > 200) return 'Password is too long';
+  if (COMMON_PASSWORDS.has(password.toLowerCase())) {
+    return 'That password is too common — please choose a stronger one';
+  }
+  return null;
+}
+
 // Helper function to convert Decimal fields to numbers for JSON serialization
 function normalizeLocation(loc: any) {
   if (!loc) return loc;
@@ -767,6 +835,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Login with password
   app.post("/api/local-users/:id/login", async (req, res) => {
     try {
+      // Throttle password guessing: per IP+account AND a looser per-IP cap so an
+      // attacker can't just rotate through account IDs from one machine.
+      const rlKey = `login:${clientIp(req)}:${req.params.id}`;
+      const rl = rateLimit(rlKey, { max: 5, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      const rlIp = rateLimit(`login-ip:${clientIp(req)}`, { max: 30, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      if (!rl.ok || !rlIp.ok) {
+        const retry = Math.max(rl.retryAfterSec || 0, rlIp.retryAfterSec || 0);
+        res.setHeader('Retry-After', String(retry));
+        return res.status(429).json({ error: `Too many login attempts. Try again in ${Math.ceil(retry / 60)} minute(s).` });
+      }
+
       const localUser = await storage.getLocalUser(req.params.id);
       if (!localUser) {
         return res.status(404).json({ error: 'User not found' });
@@ -781,6 +860,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!verifyPassword(password, localUser.passwordHash)) {
         return res.status(401).json({ error: 'Incorrect password' });
       }
+      // Successful auth — clear the per-account throttle for this IP.
+      clearRateLimit(rlKey);
       // Establish the local-user identity server-side. This is the authoritative
       // source for getLocalUserId() — not the client header or localStorage.
       (req.session as any).localUserId = localUser.id;
@@ -800,6 +881,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Set up account (email + password) for the first time
   app.post("/api/local-users/:id/setup", async (req, res) => {
     try {
+      // Throttle: setup is unauthenticated by design (onboarding), so without a
+      // limit it's an open door for invite-code guessing and account claiming.
+      const rl = rateLimit(`setup-ip:${clientIp(req)}`, { max: 10, windowMs: 15 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      if (!rl.ok) {
+        res.setHeader('Retry-After', String(rl.retryAfterSec || 0));
+        return res.status(429).json({ error: `Too many attempts. Try again in ${Math.ceil((rl.retryAfterSec || 0) / 60)} minute(s).` });
+      }
+
       // Coworkers set up their account before they have a Google session, so
       // resolve the agency account for invite-code validation below.
       const userId = req.session.userId ?? await getAgencyUserId();
@@ -818,32 +907,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!email || !password) {
         return res.status(400).json({ error: 'Email and password are required' });
       }
-      if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      const pwError = validatePassword(password);
+      if (pwError) {
+        return res.status(400).json({ error: pwError });
       }
-      // Super admins can set up their account without an invite code (bootstrap case)
+
+      // Invite code is required for everyone EXCEPT a true first-run bootstrap:
+      // a super_admin may skip the code only when NO account in the agency has a
+      // password yet. This closes the takeover where anyone could claim an
+      // unconfigured super_admin account with no invite code.
       const isSuperAdmin = localUser.role === 'super_admin';
-      if (!isSuperAdmin) {
+      let bootstrapAllowed = false;
+      if (isSuperAdmin) {
+        const peers = await storage.getLocalUsersByUserId(userId);
+        bootstrapAllowed = peers.every((u: any) => !u.passwordHash);
+      }
+
+      let inviteToConsume: { id: string } | null = null;
+      if (!bootstrapAllowed) {
         if (!inviteCode) {
           return res.status(400).json({ error: 'Invite code is required' });
         }
-        // Validate invite code
-        const invite = await storage.getInviteCodeByCode(userId, inviteCode.trim());
+        const invite = await storage.getInviteCodeByCode(userId, String(inviteCode).trim());
         if (!invite || !invite.isActive || invite.usedAt) {
           return res.status(400).json({ error: 'Invalid or already used invite code' });
         }
-        const passwordHash = hashPassword(password);
-        const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
-        await storage.markInviteCodeUsed(invite.id, req.params.id);
-        (req.session as any).localUserId = updated.id;
-        req.session.save((err) => {
-          if (err) console.error('Error saving session on setup:', err);
-          res.json(safeLocalUser(updated));
-        });
-        return;
+        inviteToConsume = invite;
       }
+
       const passwordHash = hashPassword(password);
       const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
+      if (inviteToConsume) {
+        await storage.markInviteCodeUsed(inviteToConsume.id, req.params.id);
+      }
       // Establish server-side session
       (req.session as any).localUserId = updated.id;
       req.session.save((err) => {
@@ -973,8 +1069,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!currentUser || currentUser.role !== 'super_admin') {
         return res.status(403).json({ error: 'Only super admins can create invite codes' });
       }
-      // Generate a random readable code
-      const code = crypto.randomBytes(4).toString('hex').toUpperCase();
+      // Generate a random readable code. 6 bytes = 12 hex chars (~2^48) so it
+      // can't be feasibly guessed even though setup is also rate-limited.
+      const code = crypto.randomBytes(6).toString('hex').toUpperCase();
       const invite = await storage.createInviteCode(userId, code, localUserId);
       res.status(201).json(invite);
     } catch (error) {
