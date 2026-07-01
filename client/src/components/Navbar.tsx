@@ -7,7 +7,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import { usePlatformContext } from "@/contexts/platform-context";
 import { PlatformSwitchButton } from "@/components/platform-switch-button";
 import type { Client } from "@shared/schema";
@@ -55,10 +55,9 @@ export function Navbar({ selectedClient, selectedClientId, setSelectedClientId }
   
   const syncAccountsMutation = useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/sync/accounts', {
+      const response = await fetch(getApiUrl('/api/sync/accounts'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
+        headers: { 'Content-Type': 'application/json' }, credentials: "include" });
       if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || 'Failed to sync accounts');

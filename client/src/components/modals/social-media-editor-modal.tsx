@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { Loader2, MapPin, Share2 } from "lucide-react";
 import { SiX, SiFacebook, SiInstagram, SiYoutube, SiLinkedin, SiTiktok, SiPinterest } from "react-icons/si";
 import type { ClientLocation, LocationFolder } from "@shared/schema";
@@ -70,7 +70,7 @@ export function SocialMediaEditorModal({ open, onClose, clientId, selectedLocati
   const { data: folderLocations = [], isLoading: isFolderLocationsLoading } = useQuery<ClientLocation[]>({
     queryKey: ["/api/folders", folderFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/folders/${folderFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/folders/${folderFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch folder locations");
       return response.json();
     },

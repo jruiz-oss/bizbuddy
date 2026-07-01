@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Trash2, Search, ChevronDown, ChevronUp, Copy, Link, AlertCircle, BarChart3, Clock, History, Settings, MapPin, FileText, MessageSquare, Lightbulb, Star, Share2, Eye, Smartphone, Monitor, Calendar, CheckCircle2, Image as ImageIcon, X, PenLine, Send, Upload, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
@@ -141,7 +141,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
       formData.append('image', file);
       if (selectedClientId) formData.append('clientId', selectedClientId);
 
-      const response = await fetch('/api/images/upload', {
+      const response = await fetch(getApiUrl('/api/images/upload'), {
         method: 'POST',
         body: formData,
         credentials: 'include',
@@ -222,7 +222,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
   const { data: folderLocations = [], isLoading: isFolderLocationsLoading } = useQuery<ClientLocation[]>({
     queryKey: ["/api/folders", folderFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/folders/${folderFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/folders/${folderFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch folder locations");
       return response.json();
     },
@@ -238,7 +238,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
   const { data: tagLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/tags", tagFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/tags/${tagFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch tag locations");
       return response.json();
     },
@@ -258,7 +258,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
       if (progress.errorCount > 0) {
         // Fetch failed items using the job ID from progress, not state
         try {
-          const response = await fetch(`/api/jobs/${progress.jobId}/items`);
+          const response = await fetch(getApiUrl(`/api/jobs/${progress.jobId}/items`), { credentials: "include" });
           const items: JobItem[] = await response.json();
           const failed = items.filter(item => item.status === "failed");
           setFailedJobItems(failed);
@@ -340,8 +340,9 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
 
   const deletePostMutation = useMutation({
     mutationFn: async (postId: string) => {
-      const response = await fetch(`/api/posts/${postId}`, {
+      const response = await fetch(getApiUrl(`/api/posts/${postId}`), {
         method: "DELETE",
+        credentials: "include",
       });
       if (!response.ok) throw new Error(await response.text());
       return response.json();
@@ -444,7 +445,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
   // Deselect locations by tag
   const handleDeselectByTag = async (tagId: string, tagName: string) => {
     try {
-      const response = await fetch(`/api/tags/${tagId}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagId}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch tag locations");
       const tagLocs: ClientLocation[] = await response.json();
       

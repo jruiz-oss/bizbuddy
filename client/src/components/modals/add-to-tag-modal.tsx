@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tag } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import type { LocationTag } from "@shared/schema";
 
 interface AddToTagModalProps {
@@ -33,7 +33,7 @@ export function AddToTagModal({ open, onClose, selectedLocationIds }: AddToTagMo
     setLoadingExisting(true);
     Promise.all(
       selectedLocationIds.map((locId) =>
-        fetch(`/api/locations/${locId}/tags`)
+        fetch(getApiUrl(`/api/locations/${locId}/tags`), { credentials: "include" })
           .then((r) => (r.ok ? r.json() : []))
           .then((locTags: LocationTag[]) => ({ locId, tagIds: locTags.map((t) => t.id) }))
           .catch(() => ({ locId, tagIds: [] }))

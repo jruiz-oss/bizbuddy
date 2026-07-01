@@ -73,7 +73,7 @@ export function useJobProgress(
       if (cleanup) return;
       
       try {
-        const response = await fetch(getApiUrl(`/api/jobs/${jobId}/progress`));
+        const response = await fetch(getApiUrl(`/api/jobs/${jobId}/progress`), { credentials: "include" });
         if (!response.ok) {
           throw new Error(`Failed to fetch progress: ${response.statusText}`);
         }
@@ -96,7 +96,7 @@ export function useJobProgress(
 
     const startSSE = () => {
       try {
-        eventSource = new EventSource(getApiUrl(`/api/jobs/${jobId}/stream`));
+        eventSource = new EventSource(getApiUrl(`/api/jobs/${jobId}/stream`), { withCredentials: true });
         
         eventSource.onmessage = (event) => {
           if (cleanup) return;

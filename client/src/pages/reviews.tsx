@@ -88,7 +88,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
     queryKey: ["/api/folders", selectedFolderId, "locations"],
     queryFn: async () => {
       if (!selectedFolderId) return [];
-      const response = await fetch(`/api/folders/${selectedFolderId}/locations`);
+      const response = await fetch(getApiUrl(`/api/folders/${selectedFolderId}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch folder locations");
       return response.json();
     },

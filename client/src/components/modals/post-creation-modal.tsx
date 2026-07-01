@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
 import { Upload, MessageSquare, Eye, Loader2, MapPin } from "lucide-react";
 import type { ClientLocation, LocationFolder, LocationTag } from "@shared/schema";
@@ -54,7 +54,7 @@ export function PostCreationModal({ open, onClose, clientId, selectedLocationIds
   const { data: folderLocations = [], isLoading: isFolderLocationsLoading } = useQuery<ClientLocation[]>({
     queryKey: ["/api/folders", folderFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/folders/${folderFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/folders/${folderFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch folder locations");
       return response.json();
     },
@@ -71,7 +71,7 @@ export function PostCreationModal({ open, onClose, clientId, selectedLocationIds
   const { data: tagLocations = [], isLoading: isTagLocationsLoading } = useQuery<ClientLocation[]>({
     queryKey: ["/api/tags", tagFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/tags/${tagFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch tag locations");
       return response.json();
     },

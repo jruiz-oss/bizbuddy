@@ -13,7 +13,7 @@ import { useLocation, Link as WouterLink } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
 import {
@@ -140,7 +140,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
   const { data: folderLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/folders", folderFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/folders/${folderFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/folders/${folderFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch folder locations");
       return response.json();
     },
@@ -156,7 +156,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
   const { data: tagLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/tags", tagFilter, "locations"],
     queryFn: async () => {
-      const response = await fetch(`/api/tags/${tagFilter}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagFilter}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch tag locations");
       return response.json();
     },
@@ -185,7 +185,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
   const { data: activityLogs = [] } = useQuery<ActivityLogWithLocation[]>({
     queryKey: ["/api/activity-log", selectedClientId],
     queryFn: async () => {
-      const response = await fetch(`/api/activity-log?client_id=${selectedClientId}`);
+      const response = await fetch(getApiUrl(`/api/activity-log?client_id=${selectedClientId}`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch activity log");
       const logs = await response.json();
       // Ensure payloadJson is parsed as object if it's a string
@@ -235,7 +235,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
   // Deselect locations by tag
   const handleDeselectByTag = async (tagId: string, tagName: string) => {
     try {
-      const response = await fetch(`/api/tags/${tagId}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagId}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error("Failed to fetch tag locations");
       const tagLocs: ClientLocation[] = await response.json();
       
@@ -271,7 +271,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
       if (progress.errorCount > 0) {
         // Fetch failed items using the job ID from progress, not state
         try {
-          const response = await fetch(`/api/jobs/${progress.jobId}/items`);
+          const response = await fetch(getApiUrl(`/api/jobs/${progress.jobId}/items`), { credentials: "include" });
           const items: JobItem[] = await response.json();
           const failed = items.filter(item => item.status === "failed");
           setFailedJobItems(failed);
@@ -328,8 +328,9 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
 
   const deleteActivityMutation = useMutation({
     mutationFn: async (activityId: string) => {
-      const response = await fetch(`/api/activity-log/${activityId}`, {
+      const response = await fetch(getApiUrl(`/api/activity-log/${activityId}`), {
         method: "DELETE",
+        credentials: "include",
       });
       if (!response.ok) throw new Error(await response.text());
       return response.json();

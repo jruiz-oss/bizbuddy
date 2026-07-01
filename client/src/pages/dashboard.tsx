@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useLocalUserContext } from "@/contexts/local-user-context";
@@ -21,8 +21,10 @@ import {
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip } from "recharts";
 import { formatPhoenixDateTime } from "@/lib/formatDate";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useApiError } from "@/contexts/api-error-context";
+import { parseApiError } from "@/lib/parseApiError";
 import type { Client, ClientLocation, Job } from "@shared/schema";
 
 interface DashboardProps {
@@ -85,6 +87,7 @@ export default function Dashboard({
 }: DashboardProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { showApiError } = useApiError();
   const { selectedLocalUser } = useLocalUserContext();
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [showMissingDataDialog, setShowMissingDataDialog] = useState(false);
@@ -96,7 +99,7 @@ export default function Dashboard({
   const { data: dismissedData } = useQuery<{ jobs: string[]; activity: string[] }>({
     queryKey: ["/api/dashboard/dismissed"],
     queryFn: async () => {
-      const r = await fetch(`/api/dashboard/dismissed?_t=${Date.now()}`, { cache: "no-store" });
+      const r = await fetch(getApiUrl(`/api/dashboard/dismissed?_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch dismissed items");
       return r.json();
     },
@@ -147,7 +150,7 @@ export default function Dashboard({
 
   const revertLocationInfoMutation = useMutation({
     mutationFn: async (activityId: string) => {
-      const r = await fetch(`/api/activity-log/${activityId}/revert-location-info`, { method: "POST" });
+      const r = await fetch(getApiUrl(`/api/activity-log/${activityId}/revert-location-info`), { method: "POST", credentials: "include" });
       if (!r.ok) {
         const err = await r.json().catch(() => ({}));
         throw new Error(err.message || "Failed to revert");
@@ -182,19 +185,43 @@ export default function Dashboard({
     enabled: !!activityJobId,
   });
 
-  const { data: clients = [] } = useQuery<Client[]>({
+  const {
+    data: clients = [],
+    isError: isClientsError,
+    error: clientsError,
+  } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
   });
 
-  const { data: locations = [] } = useQuery<ClientLocation[]>({
+  const {
+    data: locations = [],
+    isError: isLocationsError,
+    error: locationsError,
+  } = useQuery<ClientLocation[]>({
     queryKey: ["/api/clients", selectedClientId, "locations"],
     enabled: !!selectedClientId,
   });
 
+  // A 401 here (expired/missing session) and a client that genuinely has zero
+  // locations both resolve to an empty array — surface the real reason instead
+  // of letting the dashboard render a silent, unexplained blank state.
+  useEffect(() => {
+    const failedQuery = isClientsError ? clientsError : isLocationsError ? locationsError : null;
+    if (!failedQuery) return;
+    const rawMessage = failedQuery instanceof Error ? failedQuery.message : String(failedQuery);
+    const isAuthError = /^401\b/.test(rawMessage) || /authentication required/i.test(rawMessage);
+    showApiError(
+      isAuthError ? "Session expired" : "Couldn't load dashboard data",
+      isAuthError
+        ? "Your session has expired. Please log in again."
+        : `Failed to load dashboard data: ${parseApiError(failedQuery)}`,
+    );
+  }, [isClientsError, clientsError, isLocationsError, locationsError, showApiError]);
+
   const { data: jobs = [] } = useQuery<Job[]>({
     queryKey: ["/api/jobs", selectedClientId],
     queryFn: async () => {
-      const r = await fetch(`/api/jobs?client_id=${selectedClientId}`);
+      const r = await fetch(getApiUrl(`/api/jobs?client_id=${selectedClientId}`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch jobs");
       return r.json();
     },
@@ -204,7 +231,7 @@ export default function Dashboard({
   const { data: activityLog = [] } = useQuery<any[]>({
     queryKey: ["/api/activity-log", selectedClientId],
     queryFn: async () => {
-      const r = await fetch(`/api/activity-log?client_id=${selectedClientId}`);
+      const r = await fetch(getApiUrl(`/api/activity-log?client_id=${selectedClientId}`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch activity log");
       return r.json();
     },
@@ -227,7 +254,7 @@ export default function Dashboard({
   const { data: callCountsData } = useQuery<{ counts: Record<string, number>; previous?: Record<string, number>; days: number }>({
     queryKey: ["/api/locations/call-counts", perfDays],
     queryFn: async () => {
-      const r = await fetch(`/api/locations/call-counts?days=${perfDays}&compare=true`);
+      const r = await fetch(getApiUrl(`/api/locations/call-counts?days=${perfDays}&compare=true`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch call counts");
       return r.json();
     },
@@ -244,10 +271,7 @@ export default function Dashboard({
   }>({
     queryKey: ["/api/clients", selectedClientId, "performance", perfDays],
     queryFn: async () => {
-      const r = await fetch(
-        `/api/clients/${selectedClientId}/performance?days=${perfDays}&_t=${Date.now()}`,
-        { cache: "no-store" }
-      );
+      const r = await fetch(getApiUrl(`/api/clients/${selectedClientId}/performance?days=${perfDays}&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch performance");
       return r.json();
     },
@@ -257,7 +281,7 @@ export default function Dashboard({
   const { data: selectedJobDetail } = useQuery<any>({
     queryKey: ["/api/jobs", selectedJob?.id, "detail"],
     queryFn: async () => {
-      const r = await fetch(`/api/jobs/${selectedJob!.id}`);
+      const r = await fetch(getApiUrl(`/api/jobs/${selectedJob!.id}`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch job detail");
       return r.json();
     },
@@ -2198,7 +2222,9 @@ function activityTone(entry: any): "success" | "warning" | "danger" | "neutral" 
   if (entry.jobStatus === "failed") return "danger";
   if (entry.jobStatus === "partial") return "warning";
   if (entry.jobStatus === "success") return "success";
-  if (entry.action === "review_email_sent") return "success";
+  if (entry.action === "review_email_sent") {
+    return (entry.payloadJson as any)?.status === "failed" ? "danger" : "success";
+  }
   if (
     entry.action === "regular_hours_updated_in_app" ||
     entry.action === "special_hours_updated_in_app" ||
@@ -2229,6 +2255,7 @@ function activityBadge(entry: any): { text: string; cls: string } | null {
     return { text: "Review", cls: "bg-amber-100 text-amber-700" };
   }
   if (action === "review_email_sent") {
+    if ((entry.payloadJson as any)?.status === "failed") return { text: "Failed", cls: "bg-red-100 text-red-700" };
     return { text: "Sent", cls: "bg-emerald-100 text-emerald-700" };
   }
   if (action === "post_created_in_app") {

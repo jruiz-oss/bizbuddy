@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { X, Edit2, Check, Phone, Globe, Navigation, Eye, AlertCircle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ClientLocation } from "@shared/schema";
 
@@ -435,7 +435,7 @@ export function GbpLocationInsights({ selectedClientId }: { selectedClientId: st
   const { data, isLoading, isError, error } = useQuery<GbpPerformanceData>({
     queryKey: ["/api/locations", selectedLocationId, "performance", days],
     queryFn: async () => {
-      const res = await fetch(`/api/locations/${selectedLocationId}/performance?days=${days}&_t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(getApiUrl(`/api/locations/${selectedLocationId}/performance?days=${days}&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || "Failed to load performance data");
@@ -618,7 +618,7 @@ export function LocationPerformancePanel({ locationId }: { locationId: string })
   const { data, isLoading, isError, error } = useQuery<GbpPerformanceData>({
     queryKey: ["/api/locations", locationId, "performance", days],
     queryFn: async () => {
-      const res = await fetch(`/api/locations/${locationId}/performance?days=${days}&_t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(getApiUrl(`/api/locations/${locationId}/performance?days=${days}&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || "Failed to load performance data");

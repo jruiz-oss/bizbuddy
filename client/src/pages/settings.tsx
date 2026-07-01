@@ -71,7 +71,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
   const allFolderLocationQueries = useQueries({
     queries: locationFolders.map(folder => ({
       queryKey: [`/api/folders/${folder.id}/locations`],
-      queryFn: () => fetch(`/api/folders/${folder.id}/locations`).then(r => r.json()) as Promise<ClientLocation[]>,
+      queryFn: () => fetch(getApiUrl(`/api/folders/${folder.id}/locations`), { credentials: "include" }).then(r => r.json()) as Promise<ClientLocation[]>,
     })),
   });
 

@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -224,11 +224,30 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
   // ───────── Queries ─────────
   const { data: clients = [] } = useQuery<Client[]>({ queryKey: ["/api/clients"] });
-  const { data: allLocations = [] } = useQuery<ClientLocation[]>({ queryKey: ["/api/locations/all"] });
+  const {
+    data: allLocations = [],
+    isError: isLocationsError,
+    error: locationsError,
+  } = useQuery<ClientLocation[]>({ queryKey: ["/api/locations/all"] });
+
+  // Surface why the location list is empty instead of silently falling through
+  // to the "no locations found" empty state — a 401 (session expired) and a
+  // genuinely empty account look identical to the grid/table unless we tell them apart here.
+  useEffect(() => {
+    if (!isLocationsError) return;
+    const rawMessage = locationsError instanceof Error ? locationsError.message : String(locationsError);
+    const isAuthError = /^401\b/.test(rawMessage) || /authentication required/i.test(rawMessage);
+    showApiError(
+      isAuthError ? "Session expired" : "Couldn't load locations",
+      isAuthError
+        ? "Your session has expired. Please log in again to see your locations."
+        : `Failed to load locations: ${parseApiError(locationsError)}`,
+    );
+  }, [isLocationsError, locationsError, showApiError]);
   const { data: hiddenLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/locations/hidden"],
     queryFn: async () => {
-      const r = await fetch("/api/locations/hidden");
+      const r = await fetch(getApiUrl("/api/locations/hidden"), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch hidden locations");
       return r.json() as Promise<ClientLocation[]>;
     },
@@ -239,7 +258,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const { data: tagLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/tags", tagFilter, "locations"],
     queryFn: async () => {
-      const r = await fetch(`/api/tags/${tagFilter}/locations`);
+      const r = await fetch(getApiUrl(`/api/tags/${tagFilter}/locations`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json() as Promise<ClientLocation[]>;
     },
@@ -248,7 +267,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const { data: folderLocations = [] } = useQuery<ClientLocation[]>({
     queryKey: ["/api/folders", folderFilter, "locations"],
     queryFn: async () => {
-      const r = await fetch(`/api/folders/${folderFilter}/locations`);
+      const r = await fetch(getApiUrl(`/api/folders/${folderFilter}/locations`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json() as Promise<ClientLocation[]>;
     },
@@ -266,7 +285,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
     if (selectedClientId && !hasAutoSynced) {
       (async () => {
         try {
-          const r = await fetch("/api/sync/accounts", { method: "POST", headers: { "Content-Type": "application/json" } });
+          const r = await fetch(getApiUrl("/api/sync/accounts"), { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include" });
           if (r.ok) {
             queryClient.invalidateQueries({ queryKey: ["/api/locations/all"] });
             queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
@@ -454,7 +473,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const { data: selectedPerf } = useQuery<{ callClicks: number; impressionsTotal: number; websiteClicks: number; directionRequests: number; daily: Array<{ date: string; callClicks: number; impressions: number; websiteClicks: number; directionRequests: number }> }>({
     queryKey: ["/api/locations", primary?.id, "performance", perfRange],
     queryFn: async () => {
-      const r = await fetch(`/api/locations/${primary!.id}/performance?days=${perfRange}&_t=${Date.now()}`, { cache: "no-store" });
+      const r = await fetch(getApiUrl(`/api/locations/${primary!.id}/performance?days=${perfRange}&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!r.ok) throw new Error("Failed");
       return r.json();
     },
@@ -542,7 +561,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
   const handleDeselectByTag = async (tagId: string, tagName: string) => {
     try {
-      const response = await fetch(`/api/tags/${tagId}/locations`);
+      const response = await fetch(getApiUrl(`/api/tags/${tagId}/locations`), { credentials: "include" });
       if (!response.ok) throw new Error();
       const tagLocs: { id: string }[] = await response.json();
       const tagLocationIds = new Set(tagLocs.map(l => l.id));

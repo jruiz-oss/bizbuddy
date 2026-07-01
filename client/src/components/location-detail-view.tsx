@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, MapPin, Phone, Globe, Star, Clock,
@@ -128,7 +128,7 @@ function PerformanceSection({ locationId }: { locationId: string }) {
   const { data, isLoading, isError, error } = useQuery<GbpPerformanceData>({
     queryKey: ["/api/locations", locationId, "performance", days, 0],
     queryFn: async () => {
-      const res = await fetch(`/api/locations/${locationId}/performance?days=${days}&offset=0&_t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(getApiUrl(`/api/locations/${locationId}/performance?days=${days}&offset=0&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.message || "Failed to load performance data");
@@ -143,7 +143,7 @@ function PerformanceSection({ locationId }: { locationId: string }) {
   const { data: prevData, isLoading: prevLoading } = useQuery<GbpPerformanceData>({
     queryKey: ["/api/locations", locationId, "performance", days, 1],
     queryFn: async () => {
-      const res = await fetch(`/api/locations/${locationId}/performance?days=${days}&offset=1&_t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(getApiUrl(`/api/locations/${locationId}/performance?days=${days}&offset=1&_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
       if (!res.ok) return null as any;
       return res.json();
     },

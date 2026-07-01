@@ -913,6 +913,68 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       : emailHtml;
     const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
 
+    // Build the per-client buckets up front so the history write does not depend on
+    // anything that happens during the (possibly slow, possibly failing) send. History
+    // and send are now independent: whatever the send outcome, we record it.
+    const reviewCountByLocation = allReviews.reduce<Record<string, number>>((acc, r) => {
+      const k = r.gbpLocationId ?? "";
+      if (k) acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+    const clientBuckets = new Map<string | null, { locations: typeof locations; reviewCount: number }>();
+    for (const loc of locations) {
+      // clientId is NOT NULL in the schema, but fall back to a null bucket defensively
+      // so a row is never silently dropped if that ever changes.
+      const key = loc.clientId ?? null;
+      const bucket = clientBuckets.get(key) ?? { locations: [], reviewCount: 0 };
+      bucket.locations.push(loc);
+      bucket.reviewCount += loc.gbpLocationId ? (reviewCountByLocation[loc.gbpLocationId] ?? 0) : 0;
+      clientBuckets.set(key, bucket);
+    }
+    if (clientBuckets.size === 0) {
+      // No locations at all — still record one entry so the send is never invisible.
+      clientBuckets.set(null, { locations: [], reviewCount: 0 });
+    }
+
+    // Writes one history entry per distinct client, recording the real send outcome.
+    // Each entry is awaited and isolated in its own try so a single DB error can't
+    // wipe out the rest, and a failed write is retried once before giving up loudly.
+    async function recordHistory(status: "sent" | "failed", errorMessage: string | null) {
+      if (isTest) return;
+      for (const [clientId, bucket] of clientBuckets.entries()) {
+        const entry = {
+          userId: group.userId,
+          clientId: clientId ?? undefined,
+          action: "review_email_sent",
+          payloadJson: {
+            groupId: group.id,
+            groupName: group.name,
+            recipient: toRecipients,
+            cc: ccRecipients ?? null,
+            reviewCount: bucket.reviewCount,
+            locationCount: bucket.locations.length,
+            locationNames: bucket.locations.map((l) => l.name),
+            minStars: group.minStars,
+            maxStars: group.maxStars,
+            lookbackDays: group.lookbackDays,
+            trigger: "scheduled",
+            status,
+            error: errorMessage,
+          },
+        };
+        try {
+          await storage.createActivityLog(entry);
+        } catch (logErr) {
+          console.error(`❌ Failed to write activity log for review email "${group.name}" (client ${clientId}), retrying once:`, logErr);
+          try {
+            await storage.createActivityLog(entry);
+          } catch (retryErr) {
+            console.error(`❌ Activity log write failed again for review email "${group.name}" (client ${clientId}) — history will be missing this send:`, retryErr);
+          }
+        }
+      }
+    }
+
     try {
       const result = await sendEmail(
         {
@@ -932,53 +994,14 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       );
       if (result.success) {
         console.log(`✅ Sent review email to ${toRecipients}${ccRecipients ? ` (cc: ${ccRecipients})` : ''} for group "${group.name}"`);
-
-        // Log one activity entry per distinct client involved in this group, so
-        // the email shows up in each client's activity log.
-        try {
-          const reviewCountByLocation = allReviews.reduce<Record<string, number>>((acc, r) => {
-            const k = r.gbpLocationId ?? "";
-            if (k) acc[k] = (acc[k] || 0) + 1;
-            return acc;
-          }, {});
-          const clientBuckets = new Map<string, { locations: typeof locations; reviewCount: number }>();
-          for (const loc of locations) {
-            if (!loc.clientId) continue;
-            const bucket = clientBuckets.get(loc.clientId) ?? { locations: [], reviewCount: 0 };
-            bucket.locations.push(loc);
-            bucket.reviewCount += loc.gbpLocationId ? (reviewCountByLocation[loc.gbpLocationId] ?? 0) : 0;
-            clientBuckets.set(loc.clientId, bucket);
-          }
-          if (!isTest) {
-            for (const [clientId, bucket] of clientBuckets.entries()) {
-              await storage.createActivityLog({
-                userId: group.userId,
-                clientId,
-                action: "review_email_sent",
-                payloadJson: {
-                  groupId: group.id,
-                  groupName: group.name,
-                  recipient: toRecipients,
-                  cc: ccRecipients ?? null,
-                  reviewCount: bucket.reviewCount,
-                  locationCount: bucket.locations.length,
-                  locationNames: bucket.locations.map((l) => l.name),
-                  minStars: group.minStars,
-                  maxStars: group.maxStars,
-                  lookbackDays: group.lookbackDays,
-                  trigger: "scheduled",
-                },
-              });
-            }
-          }
-        } catch (logErr) {
-          console.error(`❌ Failed to write activity log for review email "${group.name}":`, logErr);
-        }
+        await recordHistory("sent", null);
       } else {
         console.error(`❌ Failed to send review email for group "${group.name}": ${result.error}`);
+        await recordHistory("failed", result.error ?? "unknown send error");
       }
     } catch (error) {
       console.error(`❌ Failed to send review email for group "${group.name}":`, error);
+      await recordHistory("failed", error instanceof Error ? error.message : String(error));
     }
   } catch (error) {
     console.error(`❌ Error sending scheduled review email for group:`, error);

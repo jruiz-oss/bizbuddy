@@ -211,7 +211,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const response = await fetch('/api/upload/profile-picture', { method: 'POST', body: formData });
+      const response = await fetch(getApiUrl('/api/upload/profile-picture'), { method: 'POST', body: formData, credentials: "include" });
       if (!response.ok) throw new Error('Upload failed');
       const { url } = await response.json();
       setNewProfilePicture(url);

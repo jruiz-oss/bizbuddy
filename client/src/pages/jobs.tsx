@@ -51,7 +51,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { formatPhoenixDateTime } from "@/lib/formatDate";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ActivityLog, Client, LocalUser, ClientLocation } from "@shared/schema";
 
@@ -162,7 +162,8 @@ function actionTitle(entry: ActivityLogWithUser): string {
     return entry.locationName || "Profile change detected";
   }
   if (entry.action === "review_email_sent") {
-    return p.recipient ? `Sent to ${p.recipient}` : "Email sent";
+    const verb = p.status === "failed" ? "Send failed" : "Sent";
+    return p.recipient ? `${verb} to ${p.recipient}` : (p.status === "failed" ? "Send failed" : "Email sent");
   }
   if (entry.action === "bulk_social_media_updated") {
     const sm = p.socialMedia || {};
@@ -221,6 +222,7 @@ function actionTone(entry: ActivityLogWithUser): "warning" | "danger" | "success
   if (entry.action === "location_info_changed") return "danger";
   if (entry.jobStatus === "failed") return "danger";
   if (entry.jobStatus === "partial") return "warning";
+  if (entry.action === "review_email_sent" && (entry.payloadJson as any)?.status === "failed") return "danger";
   return "neutral";
 }
 
@@ -375,7 +377,7 @@ export default function ActivityLog({ selectedClientId, setSelectedClientId }: A
   const { data: activities = [] } = useQuery<ActivityLogWithUser[]>({
     queryKey: ["/api/activity-log", selectedClientId],
     queryFn: async () => {
-      const r = await fetch(`/api/activity-log?client_id=${selectedClientId}`);
+      const r = await fetch(getApiUrl(`/api/activity-log?client_id=${selectedClientId}`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch activity log");
       return r.json();
     },
