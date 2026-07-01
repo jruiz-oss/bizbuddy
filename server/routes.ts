@@ -582,8 +582,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Derive the origin from configuration, NOT from request headers —
       // x-forwarded-proto/host are attacker-controllable and were previously
       // used to build the OAuth redirect URI.
-      const origin = process.env.APP_URL
-        || `${req.protocol}://${req.get('host')}`; // dev fallback only
+      const origin = (process.env.APP_URL
+        || `${req.protocol}://${req.get('host')}`) // dev fallback only
+        .replace(/\/+$/, ''); // strip trailing slash — avoids "//auth/..." redirect URIs
 
       // Anti-CSRF state token: verified in the callback before the code exchange.
       const state = crypto.randomBytes(16).toString('hex');
@@ -622,9 +623,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Origin stored during OAuth initiation (config-derived), with a
       // config-based fallback — never derived from request headers.
-      const origin = (req.session as any).oauthOrigin
+      const origin = ((req.session as any).oauthOrigin
         || process.env.APP_URL
-        || `${req.protocol}://${req.get('host')}`; // dev fallback only
+        || `${req.protocol}://${req.get('host')}`) // dev fallback only
+        .replace(/\/+$/, '');
 
       console.log(`🌐 OAuth callback received on origin: ${origin}`);
 

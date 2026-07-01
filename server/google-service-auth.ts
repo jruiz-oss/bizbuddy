@@ -52,15 +52,12 @@ class GoogleOAuthAuth {
     }
   }
   
-  // Helper to get the callback URL for a given origin
+  // Helper to get the callback URL for a given origin. Trailing slashes are
+  // stripped so an APP_URL like "https://app.example.com/" can't produce a
+  // double-slash redirect URI (Google rejects it with redirect_uri_mismatch).
   private getCallbackUrl(origin?: string): string {
-    if (origin) {
-      return `${origin}/auth/google/callback`;
-    } else if (process.env.APP_URL) {
-      return `${process.env.APP_URL}/auth/google/callback`;
-    } else {
-      return 'http://localhost:5000/auth/google/callback';
-    }
+    const base = (origin || process.env.APP_URL || 'http://localhost:5000').replace(/\/+$/, '');
+    return `${base}/auth/google/callback`;
   }
 
   // Generate OAuth authorization URL with dynamic callback based on request origin.
