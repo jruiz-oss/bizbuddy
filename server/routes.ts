@@ -39,6 +39,43 @@ async function getAgencyUserId(): Promise<string | null> {
   return u?.id ?? null;
 }
 
+// ── Google sign-in authorization ─────────────────────────────────────────────
+// Decides whether a Google account may sign in AT ALL. Without this gate, any
+// Google account on the internet could complete OAuth, get a session, and
+// overwrite the shared team connection.
+//
+// Rules, in order:
+//  1. If ALLOWED_GOOGLE_EMAILS is set (comma-separated emails and/or "@domain"
+//     entries), the email must match one of them.
+//  2. Otherwise, only Google accounts that already exist in the users table may
+//     sign in (they were legitimately connected before).
+//  3. First-run bootstrap: if the app has no users at all yet, the first
+//     sign-in is allowed (it becomes the agency account).
+async function isGoogleSignInAllowed(email: string, googleId: string): Promise<boolean> {
+  const normalized = (email || '').trim().toLowerCase();
+  if (!normalized) return false;
+
+  const raw = process.env.ALLOWED_GOOGLE_EMAILS || '';
+  const entries = raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  if (entries.length > 0) {
+    return entries.some(e => e.startsWith('@') ? normalized.endsWith(e) : normalized === e);
+  }
+
+  const existing = await storage.getUserByGoogleId(googleId);
+  if (existing) return true;
+
+  const [anyUser] = await db.select().from(users).limit(1);
+  return !anyUser;
+}
+
+// Promisified session regenerate — issue a fresh session ID whenever privileges
+// change (login/setup/OAuth) to prevent session fixation.
+function regenerateSession(req: any): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err: any) => (err ? reject(err) : resolve()));
+  });
+}
+
 // Password hashing helpers (Node built-in crypto, no extra packages)
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -59,10 +96,16 @@ function verifyPassword(password: string, stored: string): boolean {
   return crypto.timingSafeEqual(hashBuf, verifyBuf);
 }
 
-// Strip passwordHash and add hasPassword for safe API responses
-function safeLocalUser(user: any) {
-  const { passwordHash, ...rest } = user;
-  return { ...rest, hasPassword: !!passwordHash };
+// Strip passwordHash and add hasPassword for safe API responses.
+// Pass { includeEmail: false } for UNAUTHENTICATED responses (the login picker):
+// the roster endpoints are public by design, and emails must not leak there.
+function safeLocalUser(user: any, opts: { includeEmail?: boolean } = {}) {
+  const { passwordHash, email, ...rest } = user;
+  return {
+    ...rest,
+    ...(opts.includeEmail === false ? {} : { email }),
+    hasPassword: !!passwordHash,
+  };
 }
 
 // ── Brute-force protection (in-memory, no extra packages) ────────────────────
@@ -219,7 +262,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     "/api/health",
     "/api/auth/status",
     "/api/auth/logout",
-    "/api/auth/revoke-google",
+    // NOTE: /api/auth/revoke-google is deliberately NOT public — it disconnects
+    // the shared Google connection for the entire team (super_admin only).
     "/api/copy-review", // public share link opened from review emails
   ]);
   // Endpoints a team member needs to pick themselves and log in BEFORE they have
@@ -534,18 +578,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/auth/google", async (req, res) => {
     try {
       const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      // Determine the origin from the request
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-      const host = req.headers['host'] || req.hostname;
-      const origin = `${protocol}://${host}`;
-      
-      // Store the origin in the session for use during callback
+
+      // Derive the origin from configuration, NOT from request headers —
+      // x-forwarded-proto/host are attacker-controllable and were previously
+      // used to build the OAuth redirect URI.
+      const origin = process.env.APP_URL
+        || `${req.protocol}://${req.get('host')}`; // dev fallback only
+
+      // Anti-CSRF state token: verified in the callback before the code exchange.
+      const state = crypto.randomBytes(16).toString('hex');
+      (req.session as any).oauthState = state;
       (req.session as any).oauthOrigin = origin;
-      
+
       console.log(`🌐 OAuth initiated from origin: ${origin}`);
-      
-      const authUrl = googleOAuthAuth.getAuthUrl(origin);
+
+      const authUrl = googleOAuthAuth.getAuthUrl(origin, state);
       res.redirect(authUrl);
     } catch (error) {
       console.error('Error initiating Google OAuth:', error);
@@ -557,28 +604,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { googleOAuthAuth } = await import("./google-service-auth");
       const code = req.query.code as string;
-      
+
       if (!code) {
         return res.status(400).json({ error: 'No authorization code received' });
       }
-      
-      // Get the origin stored during OAuth initiation, or determine from current request
-      let origin = (req.session as any).oauthOrigin;
-      if (!origin) {
-        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-        const host = req.headers['host'] || req.hostname;
-        origin = `${protocol}://${host}`;
+
+      // Verify the anti-CSRF state token set when the flow was initiated. A
+      // missing/mismatched state means this callback wasn't started by us —
+      // reject before exchanging the code.
+      const expectedState = (req.session as any).oauthState;
+      const receivedState = req.query.state as string | undefined;
+      delete (req.session as any).oauthState;
+      if (!expectedState || !receivedState || receivedState !== expectedState) {
+        console.warn('⛔ OAuth callback rejected: state mismatch');
+        return res.status(403).json({ error: 'Invalid OAuth state' });
       }
-      
+
+      // Origin stored during OAuth initiation (config-derived), with a
+      // config-based fallback — never derived from request headers.
+      const origin = (req.session as any).oauthOrigin
+        || process.env.APP_URL
+        || `${req.protocol}://${req.get('host')}`; // dev fallback only
+
       console.log(`🌐 OAuth callback received on origin: ${origin}`);
-      
+
       // Pass origin to handleCallback so it uses the correct redirect URI for token exchange
       const tokens = await googleOAuthAuth.handleCallback(code, origin);
-      
+
       // Get user info from Google
       const userInfo = await googleOAuthAuth.getUserInfo();
       console.log('👤 User info from Google:', userInfo);
-      
+
+      // ── Authorization gate ────────────────────────────────────────────────
+      // Only allow-listed Google accounts may sign in. Anyone else gets their
+      // in-memory tokens wiped and the previous shared connection restored —
+      // nothing is persisted for them.
+      const allowed = await isGoogleSignInAllowed(userInfo.email, userInfo.googleId);
+      if (!allowed) {
+        console.warn(`⛔ Google sign-in REJECTED for non-allow-listed account: ${userInfo.email}`);
+        googleOAuthAuth.logout(); // clear the rejected account's tokens from memory
+        await googleOAuthAuth.loadSharedConnection(); // restore the team's connection
+        const frontendUrl = process.env.FRONTEND_URL || '/';
+        return res.redirect(`${frontendUrl}?auth_error=account_not_allowed`);
+      }
+
       // Create or get user in database
       let user = await storage.getUserByGoogleId(userInfo.googleId);
       
@@ -611,12 +680,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
 
+      // Prevent session fixation: issue a fresh session ID before elevating
+      // this session to an authenticated one.
+      await regenerateSession(req);
+
       // Store user ID in session
       req.session.userId = user.id;
       req.session.googleId = user.googleId;
-
-      // Clear the stored OAuth origin
-      delete (req.session as any).oauthOrigin;
       
       console.log('✅ User authenticated, tokens saved, and session created:', { userId: user.id, email: user.email });
       
@@ -664,9 +734,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Developer: revoke Google auth tokens without destroying session
+  // Revoke Google auth tokens without destroying session. This disconnects the
+  // SHARED connection for the whole team, so it is restricted to super_admins.
   app.post("/api/auth/revoke-google", async (req, res) => {
     try {
+      const localUserId = getLocalUserId(req);
+      const currentUser = localUserId ? await storage.getLocalUser(localUserId) : null;
+      if (!currentUser || currentUser.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only super admins can disconnect Google' });
+      }
+
       const { googleOAuthAuth } = await import("./google-service-auth");
 
       // Disconnect the shared Google connection for the whole team: clears the
@@ -811,8 +888,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!userId) {
         return res.json([]);
       }
+      // Only include emails for authenticated sessions — this endpoint is
+      // reachable pre-login for the team picker, and must not leak the roster's
+      // email addresses to the open internet.
+      const authed = !!(req.session?.userId || req.session?.localUserId);
       const localUsers = await storage.getLocalUsersByUserId(userId);
-      res.json(localUsers.map(safeLocalUser));
+      res.json(localUsers.map(u => safeLocalUser(u, { includeEmail: authed })));
     } catch (error) {
       console.error('Error fetching local users:', error);
       res.status(500).json({ error: 'Failed to fetch local users' });
@@ -825,7 +906,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!localUser) {
         return res.status(404).json({ error: 'Local user not found' });
       }
-      res.json(safeLocalUser(localUser));
+      const authed = !!(req.session?.userId || req.session?.localUserId);
+      res.json(safeLocalUser(localUser, { includeEmail: authed }));
     } catch (error) {
       console.error('Error fetching local user:', error);
       res.status(500).json({ error: 'Failed to fetch local user' });
@@ -857,11 +939,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!password) {
         return res.status(400).json({ error: 'Password is required' });
       }
+      // Cap length BEFORE hashing: scryptSync is synchronous and CPU-bound, so a
+      // multi-megabyte "password" would block the event loop (DoS).
+      if (typeof password !== 'string' || password.length > 200) {
+        return res.status(400).json({ error: 'Invalid password' });
+      }
       if (!verifyPassword(password, localUser.passwordHash)) {
         return res.status(401).json({ error: 'Incorrect password' });
       }
       // Successful auth — clear the per-account throttle for this IP.
       clearRateLimit(rlKey);
+      // Prevent session fixation: fresh session ID on privilege change. The
+      // global auth gate re-resolves userId from localUserId, so dropping any
+      // prior session state here is safe.
+      await regenerateSession(req);
       // Establish the local-user identity server-side. This is the authoritative
       // source for getLocalUserId() — not the client header or localStorage.
       (req.session as any).localUserId = localUser.id;
@@ -940,6 +1031,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (inviteToConsume) {
         await storage.markInviteCodeUsed(inviteToConsume.id, req.params.id);
       }
+      // Prevent session fixation: fresh session ID before establishing identity.
+      await regenerateSession(req);
       // Establish server-side session
       (req.session as any).localUserId = updated.id;
       req.session.save((err) => {

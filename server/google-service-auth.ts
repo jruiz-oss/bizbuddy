@@ -63,8 +63,10 @@ class GoogleOAuthAuth {
     }
   }
 
-  // Generate OAuth authorization URL with dynamic callback based on request origin
-  getAuthUrl(origin?: string) {
+  // Generate OAuth authorization URL with dynamic callback based on request origin.
+  // `state` is a per-request anti-CSRF token — the callback must verify it matches
+  // the value stored in the session before exchanging the code.
+  getAuthUrl(origin?: string, state?: string) {
     const scopes = [
       'https://www.googleapis.com/auth/business.manage',
       'https://www.googleapis.com/auth/devstorage.read_write',
@@ -81,7 +83,8 @@ class GoogleOAuthAuth {
       access_type: 'offline',
       scope: scopes,
       prompt: 'consent',
-      redirect_uri: callbackUrl
+      redirect_uri: callbackUrl,
+      ...(state ? { state } : {}),
     });
   }
 
@@ -109,13 +112,11 @@ class GoogleOAuthAuth {
       // Initialize API clients with authenticated OAuth client
       this.initApiClients();
 
-      // Persist to the single shared connection row so this login is now active
-      // for everyone (and survives a server restart). connectedBy info is filled
-      // in by the route after it fetches the Google user profile.
-      if (this.accessToken) {
-        await this.saveSharedConnection(this.accessToken, this.refreshToken);
-      }
-
+      // NOTE: persistence to the shared connection row is intentionally NOT done
+      // here. The route must first verify the Google account is allow-listed —
+      // persisting before that check would let ANY Google account overwrite the
+      // agency's shared connection. The route calls saveSharedConnection() only
+      // after the account passes authorization.
       console.log('✅ OAuth tokens received and API clients initialized');
       return tokens;
     } catch (error) {

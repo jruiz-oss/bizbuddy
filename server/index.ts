@@ -29,6 +29,33 @@ app.use(cors({
   credentials: true,
 }));
 
+// CSRF protection. Session cookies are SameSite=None (required for the
+// cross-origin Vercel → Railway setup), so browsers attach them to cross-site
+// requests. Browsers always send an Origin header on cross-origin state-changing
+// requests — reject any that isn't ours. Requests with no Origin header
+// (curl, server-to-server, most same-origin GETs) pass through.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const method = req.method.toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
+  const origin = req.headers.origin;
+  if (origin && !allowedOrigins.includes(origin)) {
+    return res.status(403).json({ message: 'Cross-origin request blocked' });
+  }
+  next();
+});
+
+// Baseline security headers (no extra packages needed).
+app.use((req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (process.env.NODE_ENV === 'production') {
+    // 180 days; add 'preload' once you're confident every subdomain is HTTPS.
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
@@ -65,25 +92,13 @@ app.use(
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-      log(logLine);
+      // Do NOT log response bodies — they can contain invite codes, emails,
+      // and other sensitive data that doesn't belong in log storage.
+      log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
 
@@ -97,8 +112,12 @@ app.use((req, res, next) => {
     app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
       const status = err.status || err.statusCode || 500;
       const message = err.message || "Internal Server Error";
-      res.status(status).json({ message });
-      throw err;
+      // Log, never rethrow: an uncaught throw here can crash the whole process,
+      // turning any request that triggers an error into a denial of service.
+      console.error("Unhandled request error:", err);
+      if (!res.headersSent) {
+        res.status(status).json({ message });
+      }
     });
 
     // In development: serve frontend via Vite dev server

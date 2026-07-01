@@ -1,7 +1,6 @@
 import { google } from 'googleapis';
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import type { Express } from 'express';
 import { storage } from './storage';
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID!;
@@ -183,40 +182,11 @@ export class GoogleBusinessAPI {
   }
 }
 
-// Setup authentication routes
-export function setupAuth(app: Express) {
-  // Using custom OAuth system only - no Passport initialization needed
-
-  // Middleware to check authentication using custom OAuth system
-  app.use('/api', async (req, res, next) => {
-    // Skip auth check for public endpoints
-    if (req.path === '/api/health') {
-      return next();
-    }
-
-    try {
-      const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      // If not authenticated but we have a session with userId, try to restore tokens
-      if (!googleOAuthAuth.isAuthenticated() && req.session.userId) {
-        const { storage } = await import("./storage");
-        const user = await storage.getUser(req.session.userId);
-        
-        if (user?.accessToken && user?.refreshToken) {
-          console.log('🔄 Restoring OAuth tokens from database for user:', user.email);
-          await googleOAuthAuth.restoreTokens(user.accessToken, user.refreshToken);
-        }
-      }
-      
-      if (!googleOAuthAuth.isAuthenticated()) {
-        return res.status(401).json({ message: 'Authentication required' });
-      }
-      next();
-    } catch (error) {
-      console.error('Auth middleware error:', error);
-      return res.status(401).json({ message: 'Authentication required' });
-    }
-  });
-}
+// NOTE: the old setupAuth() middleware was removed deliberately. It gated /api
+// on the GLOBAL shared-connection singleton (googleOAuthAuth.isAuthenticated()),
+// not on the requester's session — meaning once the shared connection loaded at
+// boot, EVERY unauthenticated visitor would have passed the check. The real
+// per-session auth gate lives in routes.ts (registerRoutes). Do not resurrect
+// this function.
 
 export { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET };
