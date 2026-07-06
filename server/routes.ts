@@ -5203,7 +5203,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         maxStars,
         customMessage: customMessage || null,
         customSubject: customSubject || null,
-        isEnabled,
+        // Never let an edit silently disable/lose the schedule: only an explicit
+        // `false` turns a group off. A missing/undefined value in the payload
+        // (e.g. a client that doesn't round-trip every field) keeps it enabled.
+        isEnabled: isEnabled === false ? false : true,
         frequency: frequency || "weekly",
         lookbackDays: lookbackDays || 7,
         lookbackOffset: lookbackOffset ?? 0,

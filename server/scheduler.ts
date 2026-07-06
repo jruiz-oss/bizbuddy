@@ -314,13 +314,39 @@ async function checkScheduledReviewEmails() {
   const now = new Date();
   const nowMs = now.getTime();
 
-  // Get all enabled email groups
-  const allGroups = await db.select().from(reviewEmailGroups).where(
-    eq(reviewEmailGroups.isEnabled, true)
-  );
+  // Get every group — including disabled ones — so we can surface *why* a group
+  // isn't sending instead of silently skipping it. A group that goes quiet for a
+  // week with zero log trace is exactly what let "Restaurant Crew" slip through
+  // (isEnabled/recipientEmail edge cases were invisible until someone happened to
+  // re-save the group in the UI).
+  const everyGroup = await db.select().from(reviewEmailGroups);
+
+  // Once an hour, log a one-line status for every group so a stuck/disabled/
+  // missing-recipient group shows up in logs long before a week goes by.
+  if (now.getUTCMinutes() === 0) {
+    for (const g of everyGroup) {
+      const due = g.isEnabled ? computeDueAtMs(g, nowMs) : null;
+      const lastSent = g.lastEmailSentAt ? new Date(g.lastEmailSentAt).toISOString() : "never";
+      const status = !g.isEnabled
+        ? "DISABLED"
+        : !g.recipientEmail
+          ? "NO RECIPIENT EMAIL — will never send"
+          : due === null
+            ? "not due yet (before startDate/first send)"
+            : (g.lastEmailSentAt ? new Date(g.lastEmailSentAt).getTime() : 0) >= due
+              ? "up to date"
+              : `OVERDUE — was due ${new Date(due).toISOString()}`;
+      console.log(`🩺 [Review email health] "${g.name}" (${g.id}) — ${status} | last sent: ${lastSent}`);
+    }
+  }
+
+  const allGroups = everyGroup.filter(g => g.isEnabled);
 
   for (const group of allGroups) {
-    if (!group.recipientEmail) continue;
+    if (!group.recipientEmail) {
+      console.warn(`⚠️ Skipping group "${group.name}" (${group.id}) — enabled but has no recipient email set`);
+      continue;
+    }
 
     try {
       const dueAtMs = computeDueAtMs(group, nowMs);
