@@ -1,11 +1,11 @@
 import cron from "node-cron";
 import { db } from "./db";
-import { jobs, clients, clientLocations, reviewEmailGroups, reviewEmailGroupLocations, users, locationPerformanceData } from "@shared/schema";
-import { and, eq, inArray, isNotNull, isNull, lt, max, or } from "drizzle-orm";
+import { jobs, clients, clientLocations, reviewEmailGroups, reviewEmailGroupLocations, users, locationPerformanceData, activityLog, googleConnection } from "@shared/schema";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, max, or, sql } from "drizzle-orm";
 import type { InsertLocationPerformanceData } from "@shared/schema";
 import { storage } from "./storage";
 import { processJob } from "./job-processor";
-import { sendEmail, type InlineImage, type EmailAttachment } from "./gmail-service";
+import { sendEmail, type InlineImage, type EmailAttachment, type UserTokens } from "./gmail-service";
 import { generateReviewsXlsx } from "./utils/review-xlsx-generator";
 import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref, generateLocationCopyHtml, generateReviewEmailHtml as generateReviewEmailHtmlTemplate } from "./utils/review-email-template";
 import { classifyReviewThemes } from "./utils/review-theme-classifier";
@@ -301,14 +301,37 @@ function computeDueAtMs(group: typeof reviewEmailGroups.$inferSelect, nowMs: num
   return firstSendMs + n * periodMs;
 }
 
+// Groups with a send currently running in THIS process. Prevents a slow send
+// (large groups take minutes) from overlapping with its own retry tick.
+const inFlightReviewEmailSends = new Set<string>();
+
+/** Minutes to wait before retry attempt N+1 (N = attempts already made). Capped at 60. */
+function retryBackoffMs(attemptsMade: number): number {
+  return Math.min(attemptsMade * 10, 60) * 60_000;
+}
+
+/**
+ * Hard cap on attempts per occurrence (~6.5 h of trying with the backoff above).
+ * Covers any realistic transient outage; a permanent config problem (e.g. an
+ * invalid recipient address) stops retrying after this instead of spamming
+ * history until the next occurrence. The failed history entries carry the error.
+ */
+const MAX_SEND_ATTEMPTS_PER_OCCURRENCE = 10;
+
 /**
  * Runs every minute (and once on startup). Sends any enabled group whose most recent
  * scheduled occurrence is due and hasn't been sent yet.
  *
- * Unlike the previous exact-minute cron match, this is catch-up safe: a delayed cron tick,
- * a busy event loop during a long send, or a server restart near send time will still fire
- * the send on the next tick instead of silently skipping the whole period. Idempotence comes
- * from the atomic claim on lastEmailSentAt rather than from a narrow time window.
+ * Send-confirmation model:
+ *  - lastSendAttemptAt is the atomic claim marker — set when an attempt STARTS.
+ *  - lastEmailSentAt advances ONLY after Gmail confirms the send (or the occurrence
+ *    is deliberately skipped, e.g. sheet format with zero reviews).
+ *
+ * So a failed or interrupted attempt (auth not restored yet after a deploy, Gmail
+ * error, process killed mid-send) no longer consumes the occurrence: the group stays
+ * due and is retried with backoff (10, 20, 30 … capped at 60 minutes between tries)
+ * until it sends or the next occurrence supersedes it. Duplicate protection comes
+ * from the optimistic claim on lastSendAttemptAt plus the in-process in-flight set.
  */
 async function checkScheduledReviewEmails() {
   const now = new Date();
@@ -327,6 +350,9 @@ async function checkScheduledReviewEmails() {
     for (const g of everyGroup) {
       const due = g.isEnabled ? computeDueAtMs(g, nowMs) : null;
       const lastSent = g.lastEmailSentAt ? new Date(g.lastEmailSentAt).toISOString() : "never";
+      const attemptInfo = (g.sendAttemptCount ?? 0) > 0 && due !== null && (g.lastEmailSentAt ? new Date(g.lastEmailSentAt).getTime() : 0) < due
+        ? ` | ${g.sendAttemptCount} failed attempt(s), last error: ${g.lastSendError ?? "unknown"}`
+        : "";
       const status = !g.isEnabled
         ? "DISABLED"
         : !g.recipientEmail
@@ -335,7 +361,7 @@ async function checkScheduledReviewEmails() {
             ? "not due yet (before startDate/first send)"
             : (g.lastEmailSentAt ? new Date(g.lastEmailSentAt).getTime() : 0) >= due
               ? "up to date"
-              : `OVERDUE — was due ${new Date(due).toISOString()}`;
+              : `OVERDUE — was due ${new Date(due).toISOString()}, retrying${attemptInfo}`;
       console.log(`🩺 [Review email health] "${g.name}" (${g.id}) — ${status} | last sent: ${lastSent}`);
     }
   }
@@ -355,18 +381,54 @@ async function checkScheduledReviewEmails() {
       const lastMs = group.lastEmailSentAt ? new Date(group.lastEmailSentAt).getTime() : 0;
       if (lastMs >= dueAtMs) continue; // already sent for this occurrence
 
-      // Atomic claim: only the first process/instance to flip lastEmailSentAt past the due
-      // instant will send. A concurrent tick or replica gets 0 rows back and skips. This also
-      // prevents double-sends within the same scheduled period.
-      const dueAtDate = new Date(dueAtMs);
+      // A send for this group is still running in this process — never overlap it.
+      if (inFlightReviewEmailSends.has(group.id)) continue;
+
+      // Retry backoff: only attempts made AFTER this occurrence became due count.
+      // An attempt marker older than dueAt belongs to a previous occurrence and
+      // must not delay the current one.
+      const attemptMs = group.lastSendAttemptAt ? new Date(group.lastSendAttemptAt).getTime() : 0;
+      const attemptsThisOccurrence = attemptMs >= dueAtMs ? (group.sendAttemptCount ?? 0) : 0;
+
+      // Too many failed attempts — stop retrying this occurrence. The failed
+      // history entries and lastSendError keep the evidence visible.
+      if (attemptsThisOccurrence >= MAX_SEND_ATTEMPTS_PER_OCCURRENCE) {
+        console.error(`🛑 Giving up on review email for group "${group.name}" after ${attemptsThisOccurrence} failed attempts (last error: ${group.lastSendError ?? "unknown"}) — will try again at the next scheduled occurrence`);
+        await db.update(reviewEmailGroups)
+          .set({
+            lastEmailSentAt: now, // consume the occurrence so retries stop
+            lastSendError: `gave up after ${attemptsThisOccurrence} failed attempts: ${group.lastSendError ?? "unknown error"}`,
+          })
+          .where(and(
+            eq(reviewEmailGroups.id, group.id),
+            or(
+              isNull(reviewEmailGroups.lastEmailSentAt),
+              lt(reviewEmailGroups.lastEmailSentAt, new Date(dueAtMs))
+            )
+          ));
+        continue;
+      }
+
+      if (attemptsThisOccurrence > 0) {
+        if (nowMs < attemptMs + retryBackoffMs(attemptsThisOccurrence)) continue; // wait out the backoff
+        console.log(`🔁 Retrying review email for group "${group.name}" — attempt ${attemptsThisOccurrence + 1} (last error: ${group.lastSendError ?? "unknown"})`);
+      }
+
+      // Atomic claim on the ATTEMPT marker (optimistic lock on its previous value).
+      // Only one process/tick can flip lastSendAttemptAt from the value we read, so
+      // concurrent ticks and replicas can't double-send. Crucially, lastEmailSentAt
+      // is NOT touched here — a claim that then fails no longer eats the occurrence.
       const claimed = await db.update(reviewEmailGroups)
-        .set({ lastEmailSentAt: now })
+        .set({ lastSendAttemptAt: now, sendAttemptCount: attemptsThisOccurrence + 1 })
         .where(and(
           eq(reviewEmailGroups.id, group.id),
           or(
             isNull(reviewEmailGroups.lastEmailSentAt),
-            lt(reviewEmailGroups.lastEmailSentAt, dueAtDate)
-          )
+            lt(reviewEmailGroups.lastEmailSentAt, new Date(dueAtMs))
+          ),
+          group.lastSendAttemptAt
+            ? eq(reviewEmailGroups.lastSendAttemptAt, group.lastSendAttemptAt)
+            : isNull(reviewEmailGroups.lastSendAttemptAt)
         ))
         .returning({ id: reviewEmailGroups.id });
 
@@ -375,17 +437,90 @@ async function checkScheduledReviewEmails() {
         continue;
       }
 
-      console.log(`📧 Sending scheduled review email for group "${group.name}" (${group.id}) — due ${dueAtDate.toISOString()}`);
+      console.log(`📧 Sending scheduled review email for group "${group.name}" (${group.id}) — due ${new Date(dueAtMs).toISOString()}, attempt ${attemptsThisOccurrence + 1}`);
+      inFlightReviewEmailSends.add(group.id);
       // Fire and forget — do NOT await. Sending can take several minutes for large groups
-      // (sequential Google API calls per location). The atomic claim above already guarantees
-      // only one send per scheduled occurrence.
-      sendScheduledReviewEmailForGroup(group).catch((error) => {
-        console.error(`❌ Uncaught error sending review email for group "${group.name}":`, error);
-      });
+      // (sequential Google API calls per location). The claim above plus the in-flight set
+      // guarantee only one attempt runs at a time.
+      sendScheduledReviewEmailForGroup(group)
+        .then(async (result) => {
+          if (result.outcome === "sent" || result.outcome === "skip") {
+            // Confirmed send (or deliberate skip) — NOW the occurrence is consumed.
+            await db.update(reviewEmailGroups)
+              .set({
+                lastEmailSentAt: new Date(),
+                sendAttemptCount: 0,
+                lastSendError: result.outcome === "sent" ? null : (result.detail ?? null),
+              })
+              .where(eq(reviewEmailGroups.id, group.id));
+            if (result.outcome === "skip") {
+              console.log(`⏭️ Review email for group "${group.name}" skipped this occurrence: ${result.detail}`);
+            }
+          } else {
+            // Failed — leave lastEmailSentAt alone so the next tick retries after backoff.
+            await db.update(reviewEmailGroups)
+              .set({ lastSendError: result.detail ?? "unknown error" })
+              .where(eq(reviewEmailGroups.id, group.id));
+            console.warn(`🔁 Review email attempt ${attemptsThisOccurrence + 1} for "${group.name}" failed — will retry in ~${retryBackoffMs(attemptsThisOccurrence + 1) / 60000} min: ${result.detail}`);
+          }
+        })
+        .catch(async (error) => {
+          console.error(`❌ Uncaught error sending review email for group "${group.name}":`, error);
+          try {
+            await db.update(reviewEmailGroups)
+              .set({ lastSendError: error instanceof Error ? error.message : String(error) })
+              .where(eq(reviewEmailGroups.id, group.id));
+          } catch (dbErr) {
+            console.error(`❌ Also failed to record the send error for "${group.name}":`, dbErr);
+          }
+        })
+        .finally(() => {
+          inFlightReviewEmailSends.delete(group.id);
+        });
     } catch (error) {
       console.error(`❌ Error checking review email schedule for group ${group.id}:`, error);
     }
   }
+}
+
+/**
+ * Tokens used for sending the review emails through Gmail.
+ *
+ * Preferred source: the shared agency Google connection (google_connection row) —
+ * it's the connection the team actively maintains, it always has the gmail.send
+ * scope, and refreshed tokens are persisted back to the same row. The previous
+ * behavior ("first user row with an access token", no ORDER BY) picked an
+ * effectively random employee's personal token; whenever that person's token had
+ * been revoked or gone stale, scheduled sends failed intermittently.
+ *
+ * Fallback: the most recently updated user that still has a refresh token, then
+ * any user with an access token — deterministic instead of arbitrary.
+ */
+async function resolveGmailSendTokens(): Promise<UserTokens | null> {
+  try {
+    const [conn] = await db.select().from(googleConnection).where(eq(googleConnection.id, 1)).limit(1);
+    if (conn?.accessToken) {
+      return {
+        accessToken: conn.accessToken,
+        refreshToken: conn.refreshToken ?? null,
+        userId: conn.connectedByUserId ?? "shared-connection",
+        persistRefreshedToken: async (newAccessToken: string) => {
+          await db.update(googleConnection)
+            .set({ accessToken: newAccessToken, updatedAt: new Date() })
+            .where(eq(googleConnection.id, 1));
+        },
+      };
+    }
+  } catch (err) {
+    console.error("⚠️ Failed to load shared connection for Gmail send, falling back to user tokens:", err);
+  }
+
+  const candidates = await db.select().from(users)
+    .where(isNotNull(users.accessToken))
+    .orderBy(desc(users.updatedAt));
+  const chosen = candidates.find(u => u.refreshToken) ?? candidates[0];
+  if (!chosen?.accessToken) return null;
+  return { accessToken: chosen.accessToken, refreshToken: chosen.refreshToken ?? null, userId: chosen.id };
 }
 
 export async function syncPerfData() {
@@ -619,50 +754,170 @@ export async function syncLocationsFromGoogle() {
   }
 }
 
-export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmailGroups.$inferSelect, isTest = false) {
+/**
+ * Outcome of a scheduled send attempt. The scheduler maps this onto the group row:
+ *  - "sent"  → lastEmailSentAt advances (occurrence consumed), attempt counter resets
+ *  - "skip"  → occurrence deliberately consumed without an email (e.g. sheet with 0 reviews)
+ *  - "retry" → occurrence stays due; retried on the next tick after backoff
+ */
+export type ReviewEmailSendResult = { outcome: "sent" | "skip" | "retry"; detail?: string };
+
+export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmailGroups.$inferSelect, isTest = false): Promise<ReviewEmailSendResult> {
+  // History entry ids created for this attempt (one per client), so the final
+  // outcome can be written onto the same rows. Declared outside the try so the
+  // outer catch can still flip them to "failed".
+  const sendingEntryIds = new Map<string | null, string>();
+  type Bucket = { locations: (typeof clientLocations.$inferSelect)[]; reviewCount: number };
+  const clientBuckets = new Map<string | null, Bucket>();
+
+  // Recipients depend only on group config — resolve up front so history entries
+  // can be written before the (slow, failure-prone) fetch/send pipeline runs.
+  const toRecipients = group.recipientEmail.split(',').map(e => e.trim()).filter(Boolean).join(', ');
+  const ccRecipients = group.ccEmail
+    ? group.ccEmail.split(',').map((e: string) => e.trim()).filter(Boolean).join(', ')
+    : undefined;
+
+  const basePayload = (status: string, reviewCount: number | null, errorMessage: string | null, bucket: Bucket) => ({
+    groupId: group.id,
+    groupName: group.name,
+    recipient: toRecipients,
+    cc: ccRecipients ?? null,
+    reviewCount,
+    locationCount: bucket.locations.length,
+    locationNames: bucket.locations.map((l) => l.name),
+    minStars: group.minStars,
+    maxStars: group.maxStars,
+    lookbackDays: group.lookbackDays,
+    trigger: "scheduled",
+    status,
+    error: errorMessage,
+  });
+
+  // Writes the final outcome onto the "sending" rows created at attempt start
+  // (falling back to a fresh insert if that create failed). Each write is
+  // isolated and retried once so one DB error can't wipe out the rest.
+  async function finalizeHistory(status: "sent" | "failed" | "skipped", errorMessage: string | null) {
+    if (isTest) return;
+    for (const [clientId, bucket] of Array.from(clientBuckets.entries())) {
+      const payloadJson = basePayload(status, bucket.reviewCount, errorMessage, bucket);
+      const existingId = sendingEntryIds.get(clientId);
+      try {
+        if (existingId) {
+          await storage.updateActivityLog(existingId, { payloadJson });
+        } else {
+          await storage.createActivityLog({ userId: group.userId, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
+        }
+      } catch (logErr) {
+        console.error(`❌ Failed to write activity log for review email "${group.name}" (client ${clientId}), retrying once:`, logErr);
+        try {
+          if (existingId) {
+            await storage.updateActivityLog(existingId, { payloadJson });
+          } else {
+            await storage.createActivityLog({ userId: group.userId, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
+          }
+        } catch (retryErr) {
+          console.error(`❌ Activity log write failed again for review email "${group.name}" (client ${clientId}) — history will be missing this send:`, retryErr);
+        }
+      }
+    }
+  }
+
   try {
     // Get all location IDs in this group
     const groupLocations = await db.select().from(reviewEmailGroupLocations).where(
       eq(reviewEmailGroupLocations.groupId, group.id)
     );
-    
+
     if (groupLocations.length === 0) {
       console.log(`📧 No locations in group "${group.name}"`);
-      return;
+      return { outcome: "skip", detail: "no locations configured in this group" };
     }
-    
+
     const locationIds = groupLocations.map(gl => gl.locationId);
-    
+
     // Get location details for the selected locations
     const locations = await db.select().from(clientLocations).where(
       inArray(clientLocations.id, locationIds)
     );
-    
+
     if (locations.length === 0) {
       console.log(`📧 No valid locations in group "${group.name}"`);
-      return;
+      return { outcome: "skip", detail: "no valid locations in this group" };
     }
-    
-    // Fetch reviews for each location
+
+    // ── Preflight: every RETRYABLE infrastructure requirement is checked here,
+    // BEFORE any history rows are written or Google is called. A failure at this
+    // stage leaves the occurrence due, so it retries once tokens/connection come
+    // back (e.g. the first minutes after a deploy while OAuth state restores).
     const { googleOAuthAuth } = await import("./google-service-auth");
-
-    // Load the active user upfront — still needed for sending email via Gmail OAuth.
-    const [activeUser] = await db.select().from(users).where(
-      isNotNull(users.accessToken)
-    ).limit(1);
-
-    // GBP API calls use the shared Google connection — load it if needed.
     if (!(await googleOAuthAuth.ensureAuthenticated())) {
-      console.log("⚠️ No shared Google connection — skipping review emails until someone connects Google.");
-      return;
+      console.log(`⚠️ No shared Google connection yet — review email for "${group.name}" will retry once Google is connected/restored.`);
+      return { outcome: "retry", detail: "shared Google connection not available" };
     }
-    
+
+    const gmailTokens = await resolveGmailSendTokens();
+    if (!gmailTokens) {
+      console.error(`❌ Cannot send review email for group "${group.name}" — no Gmail tokens available (shared connection or user)`);
+      return { outcome: "retry", detail: "no Gmail tokens available" };
+    }
+
+    // Group locations by client. clientId is NOT NULL in the schema, but fall back
+    // to a null bucket defensively so a row is never silently dropped.
+    for (const loc of locations) {
+      const key = loc.clientId ?? null;
+      const bucket = clientBuckets.get(key) ?? { locations: [], reviewCount: 0 };
+      bucket.locations.push(loc);
+      clientBuckets.set(key, bucket);
+    }
+
+    // ── History-first: record the attempt as "sending" BEFORE the long pipeline
+    // runs. If the process dies mid-send (deploy landing during a 5-minute send),
+    // the entry survives as evidence instead of the send becoming invisible. The
+    // next attempt marks any such leftovers "interrupted".
+    if (!isTest) {
+      try {
+        const staleCutoff = new Date(Date.now() - 30 * 60_000);
+        const staleRows = await db.select().from(activityLog).where(and(
+          eq(activityLog.action, "review_email_sent"),
+          lt(activityLog.timestamp, staleCutoff),
+          sql`${activityLog.payloadJson}->>'groupId' = ${group.id}`,
+          sql`${activityLog.payloadJson}->>'status' = 'sending'`
+        ));
+        for (const row of staleRows) {
+          await storage.updateActivityLog(row.id, {
+            payloadJson: { ...(row.payloadJson as any), status: "interrupted", error: "Send was interrupted (server restart or crash) — retried automatically" },
+          });
+        }
+      } catch (staleErr) {
+        console.error(`⚠️ Failed to clean up stale 'sending' history for group "${group.name}":`, staleErr);
+      }
+
+      for (const [clientId, bucket] of Array.from(clientBuckets.entries())) {
+        try {
+          const row = await storage.createActivityLog({
+            userId: group.userId,
+            clientId: clientId ?? undefined,
+            action: "review_email_sent",
+            payloadJson: basePayload("sending", null, null, bucket),
+          });
+          sendingEntryIds.set(clientId, row.id);
+        } catch (createErr) {
+          console.error(`⚠️ Failed to create 'sending' history entry for group "${group.name}" (client ${clientId}) — will insert at completion instead:`, createErr);
+        }
+      }
+    }
+
     const allReviews: any[] = [];
     const minStars = group.minStars;
     const maxStars = group.maxStars;
-    
+
     // Track all locations and their review counts
     const allCheckedLocations: { name: string; address?: string; reviewCount: number }[] = [];
+
+    // Track fetch failures — if EVERY location fails we must not send a misleading
+    // "no new reviews" email; the attempt fails and is retried instead.
+    let fetchErrorCount = 0;
+    let firstFetchError: string | null = null;
     
     // Get reviews from the lookback period (excluding today in Phoenix time)
     const lookbackDays = group.lookbackDays || 7;
@@ -757,9 +1012,11 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           `matched ${minStars}-${maxStars}★: ${matchingReviewCount}`
         );
       } catch (error) {
+        fetchErrorCount++;
+        if (!firstFetchError) firstFetchError = error instanceof Error ? error.message : String(error);
         console.error(`❌ Error fetching reviews for location ${location.id} ("${location.name}"):`, error);
       }
-      
+
       // Track this location regardless of review count
       allCheckedLocations.push({
         name: location.name,
@@ -770,8 +1027,18 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     console.log(
       `📊 [Review diag] Group "${group.name}" summary: ${locations.length} location(s) checked | ` +
       `lookback: ${lookbackDays} days (offset: ${lookbackOffset}) | star filter: ${minStars}-${maxStars} | ` +
-      `total matching reviews: ${allReviews.length}`
+      `total matching reviews: ${allReviews.length}${fetchErrorCount > 0 ? ` | fetch errors: ${fetchErrorCount}/${locations.length}` : ""}`
     );
+
+    // Every single location failed to fetch — almost certainly an auth/quota outage,
+    // not a genuinely review-free week. Sending now would deliver a false "No New
+    // Reviews" email; fail the attempt and let the backoff retry after recovery.
+    if (fetchErrorCount === locations.length) {
+      const detail = `review fetch failed for all ${locations.length} location(s): ${firstFetchError ?? "unknown error"}`;
+      console.error(`❌ ${detail} — not sending for group "${group.name}"`);
+      await finalizeHistory("failed", detail);
+      return { outcome: "retry", detail };
+    }
 
     // Theme classification — runs when API key is set and there are reviews to classify.
     // Works with or without user-defined themes (discovery-only mode if themes list is empty).
@@ -805,10 +1072,14 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const outputFormat = (group as any).outputFormat || 'email';
     const starText = minStars === maxStars ? `${minStars} star` : `${minStars}-${maxStars} stars`;
 
-    // For sheet format, skip if no reviews (nothing to attach)
+    // For sheet format, skip if no reviews (nothing to attach). This consumes the
+    // occurrence deliberately AND leaves a visible "skipped" history entry so a
+    // quiet week is distinguishable from a broken scheduler.
     if (outputFormat === 'sheet' && allReviews.length === 0) {
       console.log(`📊 No reviews to include in spreadsheet for group "${group.name}", skipping`);
-      return;
+      const detail = `no ${minStars}-${maxStars} star reviews in the period — spreadsheet not sent`;
+      await finalizeHistory("skipped", detail);
+      return { outcome: "skip", detail };
     }
 
     // Generate email HTML with all checked locations (even if no reviews)
@@ -871,12 +1142,8 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       subjectText = `${allReviews.length} New Review${allReviews.length !== 1 ? 's' : ''} — ${starText}${locationNamesText}`;
     }
     
-    // Build a single comma-separated To: string so CC recipients only get one copy
-    // regardless of how many primary recipients are listed
-    const toRecipients = group.recipientEmail.split(',').map(e => e.trim()).filter(Boolean).join(', ');
-    const ccRecipients = group.ccEmail
-      ? group.ccEmail.split(',').map((e: string) => e.trim()).filter(Boolean).join(', ')
-      : undefined;
+    // (toRecipients / ccRecipients are resolved at the top of this function so the
+    // "sending" history entries could be written before the pipeline started.)
 
     // Load the logo for inline CID embedding (works without any external URL)
     const inlineImages: InlineImage[] = [];
@@ -892,11 +1159,6 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       });
     } else {
       console.warn('⚠️ commit-logo.png not found, email will be sent without logo');
-    }
-
-    if (!activeUser?.accessToken) {
-      console.error(`❌ Cannot send review email for group "${group.name}" — no user tokens available`);
-      return;
     }
 
     // Build xlsx attachment if this group uses sheet format
@@ -939,66 +1201,19 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       : emailHtml;
     const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
 
-    // Build the per-client buckets up front so the history write does not depend on
-    // anything that happens during the (possibly slow, possibly failing) send. History
-    // and send are now independent: whatever the send outcome, we record it.
+    // Fill in the per-client review counts now that reviews are fetched. The
+    // buckets (and their "sending" history entries) were created before the
+    // pipeline started; this only patches the counts used in the final write.
     const reviewCountByLocation = allReviews.reduce<Record<string, number>>((acc, r) => {
       const k = r.gbpLocationId ?? "";
       if (k) acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
-    const clientBuckets = new Map<string | null, { locations: typeof locations; reviewCount: number }>();
-    for (const loc of locations) {
-      // clientId is NOT NULL in the schema, but fall back to a null bucket defensively
-      // so a row is never silently dropped if that ever changes.
-      const key = loc.clientId ?? null;
-      const bucket = clientBuckets.get(key) ?? { locations: [], reviewCount: 0 };
-      bucket.locations.push(loc);
-      bucket.reviewCount += loc.gbpLocationId ? (reviewCountByLocation[loc.gbpLocationId] ?? 0) : 0;
-      clientBuckets.set(key, bucket);
-    }
-    if (clientBuckets.size === 0) {
-      // No locations at all — still record one entry so the send is never invisible.
-      clientBuckets.set(null, { locations: [], reviewCount: 0 });
-    }
-
-    // Writes one history entry per distinct client, recording the real send outcome.
-    // Each entry is awaited and isolated in its own try so a single DB error can't
-    // wipe out the rest, and a failed write is retried once before giving up loudly.
-    async function recordHistory(status: "sent" | "failed", errorMessage: string | null) {
-      if (isTest) return;
-      for (const [clientId, bucket] of clientBuckets.entries()) {
-        const entry = {
-          userId: group.userId,
-          clientId: clientId ?? undefined,
-          action: "review_email_sent",
-          payloadJson: {
-            groupId: group.id,
-            groupName: group.name,
-            recipient: toRecipients,
-            cc: ccRecipients ?? null,
-            reviewCount: bucket.reviewCount,
-            locationCount: bucket.locations.length,
-            locationNames: bucket.locations.map((l) => l.name),
-            minStars: group.minStars,
-            maxStars: group.maxStars,
-            lookbackDays: group.lookbackDays,
-            trigger: "scheduled",
-            status,
-            error: errorMessage,
-          },
-        };
-        try {
-          await storage.createActivityLog(entry);
-        } catch (logErr) {
-          console.error(`❌ Failed to write activity log for review email "${group.name}" (client ${clientId}), retrying once:`, logErr);
-          try {
-            await storage.createActivityLog(entry);
-          } catch (retryErr) {
-            console.error(`❌ Activity log write failed again for review email "${group.name}" (client ${clientId}) — history will be missing this send:`, retryErr);
-          }
-        }
-      }
+    for (const bucket of Array.from(clientBuckets.values())) {
+      bucket.reviewCount = bucket.locations.reduce(
+        (sum, loc) => sum + (loc.gbpLocationId ? (reviewCountByLocation[loc.gbpLocationId] ?? 0) : 0),
+        0
+      );
     }
 
     try {
@@ -1012,25 +1227,34 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           inlineImages: (!xlsxAttachments && inlineImages.length > 0) ? inlineImages : undefined,
           attachments: xlsxAttachments,
         },
-        {
-          accessToken: activeUser.accessToken,
-          refreshToken: activeUser.refreshToken ?? null,
-          userId: activeUser.id,
-        },
+        gmailTokens,
       );
       if (result.success) {
         console.log(`✅ Sent review email to ${toRecipients}${ccRecipients ? ` (cc: ${ccRecipients})` : ''} for group "${group.name}"`);
-        await recordHistory("sent", null);
+        await finalizeHistory("sent", null);
+        return { outcome: "sent" };
       } else {
         console.error(`❌ Failed to send review email for group "${group.name}": ${result.error}`);
-        await recordHistory("failed", result.error ?? "unknown send error");
+        await finalizeHistory("failed", result.error ?? "unknown send error");
+        return { outcome: "retry", detail: result.error ?? "unknown send error" };
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
       console.error(`❌ Failed to send review email for group "${group.name}":`, error);
-      await recordHistory("failed", error instanceof Error ? error.message : String(error));
+      await finalizeHistory("failed", msg);
+      return { outcome: "retry", detail: msg };
     }
   } catch (error) {
-    console.error(`❌ Error sending scheduled review email for group:`, error);
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`❌ Error sending scheduled review email for group "${group.name}":`, error);
+    // Flip any "sending" entries to failed so the attempt stays visible, then let
+    // the scheduler retry — an unexpected exception must never eat the occurrence.
+    try {
+      await finalizeHistory("failed", msg);
+    } catch (histErr) {
+      console.error(`❌ Also failed to finalize history after error for group "${group.name}":`, histErr);
+    }
+    return { outcome: "retry", detail: msg };
   }
 }
 

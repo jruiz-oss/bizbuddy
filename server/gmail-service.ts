@@ -6,11 +6,19 @@ import { eq } from 'drizzle-orm';
 import { db } from './db';
 import { users } from '@shared/schema';
 
-// Tokens sourced from the `users` table (accessToken + refreshToken stored at login).
+// Tokens sourced from the `users` table (accessToken + refreshToken stored at login)
+// or from the shared google_connection row (scheduler sends).
 export interface UserTokens {
   accessToken: string;
   refreshToken: string | null;
   userId: string;
+  /**
+   * Where to persist an auto-refreshed access token. When omitted, the refreshed
+   * token is written back to users.accessToken for `userId` (the original
+   * behavior). Callers using the shared google_connection row pass an override
+   * so a shared-connection refresh never clobbers a personal user token row.
+   */
+  persistRefreshedToken?: (accessToken: string) => Promise<void>;
 }
 
 function buildOAuth2Client(tokens: UserTokens) {
@@ -29,9 +37,13 @@ function buildOAuth2Client(tokens: UserTokens) {
   oauth2Client.on('tokens', async (newTokens) => {
     if (newTokens.access_token) {
       try {
-        await db.update(users)
-          .set({ accessToken: newTokens.access_token, updatedAt: new Date() })
-          .where(eq(users.id, tokens.userId));
+        if (tokens.persistRefreshedToken) {
+          await tokens.persistRefreshedToken(newTokens.access_token);
+        } else {
+          await db.update(users)
+            .set({ accessToken: newTokens.access_token, updatedAt: new Date() })
+            .where(eq(users.id, tokens.userId));
+        }
       } catch (err) {
         console.error('Failed to persist refreshed Gmail access token:', err);
       }

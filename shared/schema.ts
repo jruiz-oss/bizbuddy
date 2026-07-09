@@ -289,7 +289,10 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   ccEmail: text("cc_email"),
   isEnabled: boolean("is_enabled").notNull().default(true),
   startDate: text("start_date"), // YYYY-MM-DD in Phoenix time; emails won't send before this date
-  lastEmailSentAt: timestamp("last_email_sent_at"),
+  lastEmailSentAt: timestamp("last_email_sent_at"), // advances ONLY after a confirmed send (or deliberate skip) — never at claim time
+  lastSendAttemptAt: timestamp("last_send_attempt_at"), // when the most recent send attempt started (claim marker for retry/backoff)
+  sendAttemptCount: integer("send_attempt_count").notNull().default(0), // attempts made for the current occurrence; reset on success
+  lastSendError: text("last_send_error"), // why the most recent attempt failed (surfaced in health logs)
   outputFormat: text("output_format").notNull().default("email"), // "email" | "sheet"
   sheetBreakout: text("sheet_breakout").notNull().default("region"), // "region" | "location" | "none"
   sheetName: text("sheet_name"), // custom base name for the spreadsheet attachment; date range is appended dynamically. Falls back to group name when empty.

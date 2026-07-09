@@ -26,6 +26,40 @@ function getLocalUserId(req: any): string | null {
   return typeof localUserId === 'string' ? localUserId : null;
 }
 
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// The GBP "Business Information" API's default per-minute quota is low and
+// shared across every location we scan. Bursting requests (even a handful in
+// parallel) reliably exhausts it once there are 50+ locations. Wrap calls that
+// hit this API with backoff so a transient 429/"Quota exceeded" doesn't get
+// reported as a permanent per-location error — it just waits and retries.
+function isQuotaExceededError(error: any): boolean {
+  const msg = String(error?.message || error || '');
+  return msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED') || error?.code === 429 || error?.status === 429;
+}
+
+async function withQuotaRetry<T>(fn: () => Promise<T>, options?: { maxRetries?: number; baseDelayMs?: number }): Promise<T> {
+  const maxRetries = options?.maxRetries ?? 4;
+  const baseDelayMs = options?.baseDelayMs ?? 3000;
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (!isQuotaExceededError(error) || attempt === maxRetries) {
+        throw error;
+      }
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      console.warn(`⏳ Quota exceeded, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
 // This is a single-agency internal tool: everything hangs off ONE Google account
 // (the one that connected Google). Team members are "local users" under it and
 // must NOT have to do Google OAuth themselves. This resolves that one agency
@@ -4221,8 +4255,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let errored = 0;
       let firstError: string | null = null;
 
-      // Process locations in parallel batches
-      const BATCH_SIZE = 10;
+      // Process locations in small parallel batches. BATCH_SIZE was 10 with only a
+      // 200ms gap between batches (~50 req/sec bursts), which blows through the GBP
+      // Business Information API's per-minute quota well before 150+ locations are
+      // scanned — every location after that fails with "Quota exceeded". Lowering
+      // concurrency + adding real spacing, plus retrying quota errors with backoff
+      // (see withQuotaRetry above) instead of counting them as permanent failures,
+      // keeps the scan under the quota ceiling.
+      const BATCH_SIZE = 3;
+      const BATCH_DELAY_MS = 2000;
 
       for (let i = 0; i < allLocations.length; i += BATCH_SIZE) {
         const batch = allLocations.slice(i, i + BATCH_SIZE);
@@ -4235,11 +4276,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               locationName = `locations/${locationName}`;
             }
 
-            const checkResult = await googleOAuthAuth.checkForGoogleUpdates(locationName);
-            
+            const checkResult = await withQuotaRetry(() => googleOAuthAuth.checkForGoogleUpdates(locationName));
+
             if (checkResult.hasUpdates) {
               try {
-                const suggestedUpdate = await googleOAuthAuth.getGoogleUpdatedLocation(locationName);
+                const suggestedUpdate = await withQuotaRetry(() => googleOAuthAuth.getGoogleUpdatedLocation(locationName));
                 const originalLoc = checkResult.location || {};
                 const suggestedLoc = suggestedUpdate?.location || {};
                 let diffMask = suggestedUpdate?.diffMask || "";
@@ -4376,9 +4417,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           errored
         });
 
-        // Small delay between batches to avoid rate limiting
+        // Delay between batches to avoid rate limiting
         if (i + BATCH_SIZE < allLocations.length) {
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await sleep(BATCH_DELAY_MS);
         }
       }
 

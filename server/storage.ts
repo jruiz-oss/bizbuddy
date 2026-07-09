@@ -67,6 +67,7 @@ export interface IStorage {
   getActivityLogsByClientId(clientId: string, limit?: number): Promise<ActivityLog[]>;
   getActivityLogById(id: string): Promise<ActivityLog | undefined>;
   createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
+  updateActivityLog(id: string, updates: Partial<InsertActivityLog>): Promise<ActivityLog | undefined>;
   deleteActivityLog(id: string): Promise<ActivityLog | undefined>;
   bulkDeleteActivityLogs(ids: string[]): Promise<number>;
   
@@ -427,6 +428,13 @@ export class DatabaseStorage implements IStorage {
   async createActivityLog(insertLog: InsertActivityLog): Promise<ActivityLog> {
     const [log] = await db.insert(activityLog).values(insertLog).returning();
     return log;
+  }
+
+  // Used by the review-email scheduler to flip a "sending" history entry to its
+  // final sent/failed state once the outcome is known.
+  async updateActivityLog(id: string, updates: Partial<InsertActivityLog>): Promise<ActivityLog | undefined> {
+    const [log] = await db.update(activityLog).set(updates).where(eq(activityLog.id, id)).returning();
+    return log || undefined;
   }
 
   async getActivityLogById(id: string): Promise<ActivityLog | undefined> {

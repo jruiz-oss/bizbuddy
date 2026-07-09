@@ -29,6 +29,13 @@
       "when": 1782240200000,
       "tag": "0005_google_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1783555200000,
+      "tag": "0006_review_email_send_tracking",
+      "breakpoints": true
     }
   ]
 }

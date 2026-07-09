@@ -2223,7 +2223,11 @@ function activityTone(entry: any): "success" | "warning" | "danger" | "neutral" 
   if (entry.jobStatus === "partial") return "warning";
   if (entry.jobStatus === "success") return "success";
   if (entry.action === "review_email_sent") {
-    return (entry.payloadJson as any)?.status === "failed" ? "danger" : "success";
+    const s = (entry.payloadJson as any)?.status;
+    if (s === "failed") return "danger";
+    if (s === "sending" || s === "interrupted") return "warning";
+    if (s === "skipped") return "neutral";
+    return "success";
   }
   if (
     entry.action === "regular_hours_updated_in_app" ||
@@ -2255,7 +2259,11 @@ function activityBadge(entry: any): { text: string; cls: string } | null {
     return { text: "Review", cls: "bg-amber-100 text-amber-700" };
   }
   if (action === "review_email_sent") {
-    if ((entry.payloadJson as any)?.status === "failed") return { text: "Failed", cls: "bg-red-100 text-red-700" };
+    const s = (entry.payloadJson as any)?.status;
+    if (s === "failed") return { text: "Failed", cls: "bg-red-100 text-red-700" };
+    if (s === "sending") return { text: "Sending…", cls: "bg-amber-100 text-amber-700" };
+    if (s === "interrupted") return { text: "Interrupted", cls: "bg-amber-100 text-amber-700" };
+    if (s === "skipped") return { text: "Skipped", cls: "bg-gray-100 text-gray-600" };
     return { text: "Sent", cls: "bg-emerald-100 text-emerald-700" };
   }
   if (action === "post_created_in_app") {

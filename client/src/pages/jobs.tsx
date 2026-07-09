@@ -162,8 +162,13 @@ function actionTitle(entry: ActivityLogWithUser): string {
     return entry.locationName || "Profile change detected";
   }
   if (entry.action === "review_email_sent") {
-    const verb = p.status === "failed" ? "Send failed" : "Sent";
-    return p.recipient ? `${verb} to ${p.recipient}` : (p.status === "failed" ? "Send failed" : "Email sent");
+    const verb =
+      p.status === "failed" ? "Send failed" :
+      p.status === "sending" ? "Sending" :
+      p.status === "interrupted" ? "Send interrupted" :
+      p.status === "skipped" ? "Skipped (no reviews)" :
+      "Sent";
+    return p.recipient ? `${verb} — ${p.recipient}` : verb;
   }
   if (entry.action === "bulk_social_media_updated") {
     const sm = p.socialMedia || {};
@@ -222,7 +227,11 @@ function actionTone(entry: ActivityLogWithUser): "warning" | "danger" | "success
   if (entry.action === "location_info_changed") return "danger";
   if (entry.jobStatus === "failed") return "danger";
   if (entry.jobStatus === "partial") return "warning";
-  if (entry.action === "review_email_sent" && (entry.payloadJson as any)?.status === "failed") return "danger";
+  if (entry.action === "review_email_sent") {
+    const s = (entry.payloadJson as any)?.status;
+    if (s === "failed") return "danger";
+    if (s === "sending" || s === "interrupted") return "warning";
+  }
   return "neutral";
 }
 
@@ -264,6 +273,11 @@ function detailChip(entry: ActivityLogWithUser): string | null {
     if (urls.length > 0) return urls.join("  ·  ");
   }
   if (entry.action === "review_email_sent") {
+    if ((p.status === "failed" || p.status === "interrupted") && p.error) {
+      const err = String(p.error);
+      return err.length > 120 ? err.slice(0, 117) + "…" : err;
+    }
+    if (p.status === "sending") return "Send in progress…";
     if (p.reviewCount != null) {
       return `${p.reviewCount} review${p.reviewCount === 1 ? "" : "s"} included`;
     }
@@ -1100,10 +1114,20 @@ function EventDetailBody({
       {action === "review_email_sent" && (
         <SectionCard title="Email">
           <div className="bg-white border border-gray-200 rounded p-3 space-y-1.5 text-[13px] text-gray-800">
+            {p.status && (
+              <div>
+                <span className="text-gray-500">Status:</span>{" "}
+                {p.status === "sent" ? "Sent" : p.status === "failed" ? "Failed" : p.status === "sending" ? "Sending…" : p.status === "interrupted" ? "Interrupted (retried automatically)" : p.status === "skipped" ? "Skipped — no reviews in period" : p.status}
+              </div>
+            )}
             {p.recipient && (<div><span className="text-gray-500">Recipient:</span> {p.recipient}</div>)}
+            {p.cc && (<div><span className="text-gray-500">CC:</span> {p.cc}</div>)}
             {p.subject && (<div><span className="text-gray-500">Subject:</span> {p.subject}</div>)}
             {p.reviewCount != null && (<div><span className="text-gray-500">Reviews included:</span> {p.reviewCount}</div>)}
             {p.locationCount != null && (<div><span className="text-gray-500">Locations:</span> {p.locationCount}</div>)}
+            {p.error && (p.status === "failed" || p.status === "interrupted") && (
+              <div className="text-red-600"><span className="text-gray-500">Error:</span> {String(p.error)}</div>
+            )}
           </div>
         </SectionCard>
       )}
