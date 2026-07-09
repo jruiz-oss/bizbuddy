@@ -928,20 +928,16 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
     const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
     const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
-    // Snap 7-day periods to Mon–Sun calendar weeks.
-    // Find the Monday that starts the most recent complete week:
-    //   dayOfWeek: 0=Sun,1=Mon,...,6=Sat
-    //   daysToEndOfLastWeek: how many days back from today to get to the Monday after last Sunday
-    //     Mon=0 (this week already started), Tue=1, ..., Sun=6 (last Monday was 6 days ago)
-    const todayDayOfWeek = today.getDay(); // 0=Sun
-    const daysToStartOfLastWeek = todayDayOfWeek === 0 ? 6 : todayDayOfWeek - 1;
-    // weekEndMs = midnight of the Monday right after the most recent complete Sun (exclusive upper bound)
-    const weekEndMs = midnightPhoenixMs - daysToStartOfLastWeek * 86400000;
-    // Apply lookbackOffset (in days, expected multiple of 7) to shift to prior weeks
-    const offsetMs = lookbackOffset * 86400000;
+    // Rolling window: periodEnd is always "today" (excludes today's reviews, per the
+    // comment above), periodStart is lookbackDays before that. lookbackOffset shifts
+    // the whole window back further (e.g. to preview "last period" rather than current).
+    // NOTE: this used to snap periodEnd to the most recent complete Mon–Sun calendar week,
+    // which could push the effective cutoff several days earlier than "today" and made
+    // recent reviews look like they were missing/"too old" right after they were fetched.
     // periodEnd is exclusive (reviews < periodEnd), periodStart is inclusive (reviews >= periodStart)
-    const periodEnd = new Date(weekEndMs - offsetMs + PHOENIX_OFFSET_MS);
-    const periodStart = new Date(weekEndMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
+    const offsetMs = lookbackOffset * 86400000;
+    const periodEnd = new Date(midnightPhoenixMs - offsetMs + PHOENIX_OFFSET_MS);
+    const periodStart = new Date(midnightPhoenixMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
     
     for (const location of locations) {
       let matchingReviewCount = 0;
@@ -1008,7 +1004,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           `in-window: 1★${inWindowStarCounts[1]||0} 2★${inWindowStarCounts[2]||0} 3★${inWindowStarCounts[3]||0} 4★${inWindowStarCounts[4]||0} 5★${inWindowStarCounts[5]||0} | ` +
           `dropped: today=${droppedAsToday} tooOld=${droppedAsTooOld} | ` +
           `dates: oldest=${fmt(oldestReviewDate)} newest=${fmt(newestReviewDate)} | ` +
-          `window: ${periodStart.toISOString()} → ${today.toISOString()} | ` +
+          `window: ${periodStart.toISOString()} → ${periodEnd.toISOString()} | ` +
           `matched ${minStars}-${maxStars}★: ${matchingReviewCount}`
         );
       } catch (error) {
@@ -1083,11 +1079,11 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
 
     // Generate email HTML with all checked locations (even if no reviews)
-    // Display dates match the Mon–Sun window used for fetching:
-    // _endDate = last day included (Sunday = weekEndMs - offsetMs - 1 day)
-    // _startDate = first day included (Monday = weekEndMs - offsetMs - lookbackDays)
-    const _endDate = new Date(weekEndMs - offsetMs - 86400000 + PHOENIX_OFFSET_MS);
-    const _startDate = new Date(weekEndMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
+    // Display dates match the rolling window used for fetching:
+    // _endDate = last day included (periodEnd is exclusive, so subtract 1 day)
+    // _startDate = first day included (periodStart)
+    const _endDate = new Date(periodEnd.getTime() - 86400000);
+    const _startDate = periodStart;
     const schedulerDateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
     const emailHtml = generateReviewEmailHtmlTemplate(allReviews, group.name, minStars, maxStars, schedulerDateRange, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
