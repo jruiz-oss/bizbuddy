@@ -880,8 +880,10 @@ export default function Dashboard({
                       {upcomingPosts.map((job) => {
                         const sched = (job as any).scheduledDate;
                         const time = (job as any).scheduledTime || "00:00";
+                        // scheduledDate/scheduledTime are stored as UTC — parse as UTC ("Z")
+                        // so formatWhen's Phoenix-timezone rendering lines up with posts.tsx.
                         const when = sched
-                          ? new Date(`${sched.toString().split("T")[0]}T${time}:00`)
+                          ? new Date(`${sched.toString().split("T")[0]}T${time}:00Z`)
                           : null;
                         const itemCount = (job as any).items?.length ?? (job as any).totalCount ?? 0;
                         return (
@@ -2120,16 +2122,20 @@ function UpcomingRow({
     : tone === "purple" ? "bg-purple-50 text-purple-600"
     : "bg-emerald-50 text-emerald-600";
 
+  // Always render in Phoenix time (labeled) so this matches what was set,
+  // regardless of the viewer's own timezone — see formatScheduledDateTime.
+  const PHOENIX_TZ = "America/Phoenix";
   const formatWhen = (d: Date | null) => {
     if (!d) return "";
+    const dayKeyOf = (date: Date) => date.toLocaleDateString("en-US", { timeZone: PHOENIX_TZ });
     const now = new Date();
-    const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
     const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1);
-    const isTomorrow = d.getFullYear() === tomorrow.getFullYear() && d.getMonth() === tomorrow.getMonth() && d.getDate() === tomorrow.getDate();
-    const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    const sameDay = dayKeyOf(d) === dayKeyOf(now);
+    const isTomorrow = dayKeyOf(d) === dayKeyOf(tomorrow);
+    const time = d.toLocaleTimeString("en-US", { timeZone: PHOENIX_TZ, hour: "numeric", minute: "2-digit" }) + " Phoenix";
     if (sameDay) return `Today, ${time}`;
     if (isTomorrow) return `Tomorrow, ${time}`;
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + `, ${time}`;
+    return d.toLocaleDateString("en-US", { timeZone: PHOENIX_TZ, month: "short", day: "numeric" }) + `, ${time}`;
   };
 
   return (

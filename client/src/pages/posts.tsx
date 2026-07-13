@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
 import { useJobProgress } from "@/hooks/use-job-progress";
+import { formatScheduledDateTime } from "@/lib/formatDate";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
 import {
   AlertDialog,
@@ -54,28 +55,12 @@ interface PostsProps {
   setSelectedClientId: (id: string) => void;
 }
 
-// Helper function to convert UTC stored time back to local time for display
+// Scheduled posts are stored as a UTC date + "HH:MM" pair. Always display
+// them back in Phoenix time (labeled) so the time shown matches what was
+// set, regardless of the viewer's own timezone.
 function formatScheduledTimeLocal(scheduledDate: string, scheduledTime: string): { date: string; time: string } {
-  // Parse the UTC date and time
-  const [hours, minutes] = scheduledTime.split(':').map(Number);
-  const utcDate = new Date(scheduledDate);
-  utcDate.setUTCHours(hours, minutes, 0, 0);
-  
-  // Format in local time
-  const localDate = utcDate.toLocaleDateString('en-US', {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-  
-  const localTime = utcDate.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
-  
-  return { date: localDate, time: localTime };
+  const { date, timeWithLabel } = formatScheduledDateTime(scheduledDate, scheduledTime);
+  return { date, time: timeWithLabel };
 }
 
 export default function Posts({ selectedClientId, setSelectedClientId }: PostsProps) {
