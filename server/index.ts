@@ -49,6 +49,24 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  // CSP: tighten what can load on each page.
+  // - script-src: self + the CDN used by /api/copy-review's inline DOMPurify page
+  // - img-src: self + data URIs (profile pictures) + https (Google/external avatars)
+  // - connect-src: self (API calls from the SPA)
+  // 'unsafe-inline' on style-src covers Tailwind's runtime style injection; remove
+  // once the build emits hashed style chunks.
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https:",
+      "connect-src 'self'",
+      "font-src 'self' data:",
+      "frame-ancestors 'none'",
+    ].join('; '),
+  );
   if (process.env.NODE_ENV === 'production') {
     // 180 days; add 'preload' once you're confident every subdomain is HTTPS.
     res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');

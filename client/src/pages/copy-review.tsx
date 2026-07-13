@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import DOMPurify from "dompurify";
 
 // Decode a base64url (or plain base64) string to UTF-8 text
 function decodeBase64(s: string): string {
@@ -182,7 +183,7 @@ export default function CopyReview() {
             background: "#fff",
             WebkitOverflowScrolling: "touch",
           }}
-          dangerouslySetInnerHTML={{ __html: richHtml || `<pre style="white-space:pre-wrap;font-size:13px;color:#374151;">${plainText.replace(/</g, "&lt;")}</pre>` }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(richHtml) || `<pre style="white-space:pre-wrap;font-size:13px;color:#374151;">${plainText.replace(/</g, "&lt;")}</pre>` }}
         />
 
         <p style={{ marginTop: 16, fontSize: 12, color: "#9ca3af", textAlign: "center" }}>

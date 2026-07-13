@@ -210,6 +210,19 @@ function validatePassword(password: unknown): string | null {
   return null;
 }
 
+// Validate profilePictureUrl: allow data URIs for images and https:// URLs only.
+// Blocks javascript: URIs and arbitrary http:// internal-network addresses.
+function validateProfilePictureUrl(url: unknown): string | null {
+  if (url === null || url === undefined || url === '') return null;
+  if (typeof url !== 'string') return null;
+  if (url.startsWith('data:image/') && url.includes(';base64,')) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'https:') return url;
+  } catch {}
+  return null; // reject anything else
+}
+
 // Helper function to convert Decimal fields to numbers for JSON serialization
 function normalizeLocation(loc: any) {
   if (!loc) return loc;
@@ -1108,11 +1121,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!name) {
         return res.status(400).json({ error: 'Name is required' });
       }
+      const safeProfileUrl = validateProfilePictureUrl(profilePictureUrl);
+      if (profilePictureUrl && safeProfileUrl === null) {
+        return res.status(400).json({ error: 'profilePictureUrl must be a data:image URI or an https:// URL' });
+      }
       const localUser = await storage.createLocalUser({
         userId,
         name,
         title: title || null,
-        profilePictureUrl: profilePictureUrl || null,
+        profilePictureUrl: safeProfileUrl,
         role: isFirstUser ? 'super_admin' : (role || 'admin'),
       });
       res.status(201).json(safeLocalUser(localUser));
@@ -1134,10 +1151,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: 'Not authorized to edit this user' });
       }
       const { name, title, profilePictureUrl } = req.body;
+      const safeProfileUrl = validateProfilePictureUrl(profilePictureUrl);
+      if (profilePictureUrl && safeProfileUrl === null) {
+        return res.status(400).json({ error: 'profilePictureUrl must be a data:image URI or an https:// URL' });
+      }
       const localUser = await storage.updateLocalUser(req.params.id, {
         name,
         title,
-        profilePictureUrl,
+        profilePictureUrl: safeProfileUrl,
       });
       res.json(safeLocalUser(localUser));
     } catch (error) {
@@ -5336,7 +5357,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Copy Reviews — BizBuddy</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js" integrity="sha512-H+rglffZ6f5gF7UJgvH4Naa+fGCgjrHKMGoFOGmcPTRwR6oILo5R+gtzNrpDp7iMV3udbymBVjkeZGNz1Em6Q==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; background: #f9fafb; display: flex; flex-direction: column; align-items: center; padding: 24px 16px; min-height: 100vh; }

@@ -1,8 +1,7 @@
-import { Router, Request } from 'express';
+import { Router } from 'express';
 import multer from 'multer';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { verifyLocations } from './services/gbpVerification';
 
 const router = Router();
 
@@ -33,12 +32,6 @@ async function ensureDataDir() {
   } catch {
     await fs.mkdir(dir, { recursive: true });
   }
-}
-
-// Interface for authenticated requests
-interface AuthenticatedRequest extends Request {
-  oauth2Client?: any;
-  user?: any;
 }
 
 // Upload new CSV (replaces existing)
@@ -80,34 +73,6 @@ router.get('/csv-status', async (req, res) => {
   } catch (error) {
     console.error('CSV status error:', error);
     res.status(500).json({ error: 'Failed to check CSV status' });
-  }
-});
-
-// Verify all locations
-router.get('/verify-all', async (req: AuthenticatedRequest, res) => {
-  try {
-    // Get access token the same way your google-service-auth.ts does
-    const oauth2Client = req.oauth2Client;
-
-    if (!oauth2Client) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    // Get the access token
-    const { token } = await oauth2Client.getAccessToken();
-
-    if (!token) {
-      return res.status(401).json({ error: 'Failed to get access token' });
-    }
-
-    const results = await verifyLocations(token);
-    res.json(results);
-  } catch (error) {
-    console.error('Verification error:', error);
-    res.status(500).json({ 
-      error: 'Failed to verify locations',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    });
   }
 });
 
