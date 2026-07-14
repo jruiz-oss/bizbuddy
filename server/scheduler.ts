@@ -712,7 +712,9 @@ export async function syncLocationsFromGoogle() {
             clientId: existing.clientId,
             clientLocationId: locationId,
             action: "location_info_changed",
-            payloadJson: { changes: infoChanges },
+            // Detected by the unattended weekly Google sync — no human triggered it,
+            // so it legitimately shows as "System" rather than the account owner.
+            payloadJson: { changes: infoChanges, source: "system" },
           });
           console.log(`📝 [Sync] Logged info change for "${existing.name}" → "${updateFields.name}" (${infoChanges.map(c => c.field).join(", ")})`);
         } catch (err) {
@@ -805,7 +807,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         if (existingId) {
           await storage.updateActivityLog(existingId, { payloadJson });
         } else {
-          await storage.createActivityLog({ userId: group.userId, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
+          await storage.createActivityLog({ userId: group.userId, localUserId: group.createdByLocalUserId ?? undefined, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
         }
       } catch (logErr) {
         console.error(`❌ Failed to write activity log for review email "${group.name}" (client ${clientId}), retrying once:`, logErr);
@@ -813,7 +815,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           if (existingId) {
             await storage.updateActivityLog(existingId, { payloadJson });
           } else {
-            await storage.createActivityLog({ userId: group.userId, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
+            await storage.createActivityLog({ userId: group.userId, localUserId: group.createdByLocalUserId ?? undefined, clientId: clientId ?? undefined, action: "review_email_sent", payloadJson });
           }
         } catch (retryErr) {
           console.error(`❌ Activity log write failed again for review email "${group.name}" (client ${clientId}) — history will be missing this send:`, retryErr);
@@ -896,6 +898,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
         try {
           const row = await storage.createActivityLog({
             userId: group.userId,
+            localUserId: group.createdByLocalUserId ?? undefined,
             clientId: clientId ?? undefined,
             action: "review_email_sent",
             payloadJson: basePayload("sending", null, null, bucket),

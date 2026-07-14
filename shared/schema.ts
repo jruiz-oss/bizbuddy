@@ -275,6 +275,10 @@ export const inviteCodes = pgTable("invite_codes", {
 export const reviewEmailGroups = pgTable("review_email_groups", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
+  // Team member who created the schedule. Scheduled sends run unattended, so this
+  // is the only way to attribute "review_email_sent" activity to a person instead
+  // of falling back to "System". Null for legacy groups created before this field.
+  createdByLocalUserId: varchar("created_by_local_user_id").references(() => localUsers.id),
   name: text("name").notNull(),
   recipientEmail: text("recipient_email").notNull(),
   emailDay: text("email_day").notNull().default("1"),

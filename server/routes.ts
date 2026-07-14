@@ -1440,7 +1440,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 clientId: existingLocation.clientId,
                 clientLocationId: locationId,
                 action: "location_info_changed",
-                payloadJson: { changes: infoChanges },
+                // Detected while syncing from Google — the change came from GBP, not
+                // from a person editing in-app, so it stays attributed to "System".
+                payloadJson: { changes: infoChanges, source: "system" },
               });
               console.log(`📝 Logged info change for "${existingLocation.name}" → "${updateFields.name}" (${infoChanges.map(c => c.field).join(", ")})`);
             } catch (err) {
@@ -1866,6 +1868,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const activities = await storage.getActivityLogsByClientId(client_id);
 
+      // Account owner for this client — used as the attribution fallback when an
+      // activity has no team member attached (e.g. the owner signed in through
+      // Google and performed the action directly, so there's no local-user row).
+      // Genuinely unattended actions (marked payloadJson.source === "system", like
+      // the weekly Google sync) intentionally skip this and remain "System".
+      const client = await storage.getClient(client_id);
+      const ownerUser = client?.userId ? await storage.getUser(client.userId) : undefined;
+      const ownerFallback = ownerUser
+        ? { id: `owner:${ownerUser.id}`, name: ownerUser.name, title: "Account owner", profilePictureUrl: null }
+        : null;
+
       // Collect unique jobIds referenced in payloads
       const jobIds = [...new Set(
         activities
@@ -1889,18 +1902,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           : (activity.payloadJson?.status ?? null);
         if (activity.localUserId) {
           const localUser = await storage.getLocalUser(activity.localUserId);
-          return {
-            ...activity,
-            jobStatus,
-            localUser: localUser ? {
-              id: localUser.id,
-              name: localUser.name,
-              title: localUser.title,
-              profilePictureUrl: localUser.profilePictureUrl
-            } : null
-          };
+          if (localUser) {
+            return {
+              ...activity,
+              jobStatus,
+              localUser: {
+                id: localUser.id,
+                name: localUser.name,
+                title: localUser.title,
+                profilePictureUrl: localUser.profilePictureUrl
+              }
+            };
+          }
         }
-        return { ...activity, jobStatus, localUser: null };
+        // No team member attached. Attribute to the account owner unless this was a
+        // genuinely unattended, system-generated action.
+        const isSystem = activity.payloadJson?.source === "system";
+        return { ...activity, jobStatus, localUser: isSystem ? null : ownerFallback };
       }));
       
       res.json(enrichedActivities);
@@ -1975,6 +1993,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Log the revert action
       await storage.createActivityLog({
         userId: entry.userId ?? undefined,
+        // A person clicked "revert" — attribute it to them (falls back to the
+        // account owner during enrichment when no team member is in session).
+        localUserId: getLocalUserId(req) ?? undefined,
         clientId: entry.clientId ?? undefined,
         clientLocationId: entry.clientLocationId ?? undefined,
         action: "location_info_changed",
@@ -5208,6 +5229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const group = await storage.createReviewEmailGroup({
         userId: req.session!.userId!,
+        createdByLocalUserId: getLocalUserId(req) ?? undefined,
         name,
         recipientEmail,
         ccEmail: ccEmail || null,
