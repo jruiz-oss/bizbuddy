@@ -11,6 +11,7 @@ export interface JobProgress {
   percent: number;
   step: number; // 1: Queued, 2: Processing, 3: Finalizing
   errorMessage?: string; // first error reason from failed job items
+  isAuthError?: boolean; // true only when a failure is a genuine Google session/auth problem
 }
 
 interface UseJobProgressOptions {

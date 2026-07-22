@@ -12,6 +12,7 @@ import { Share2, Search, Folder, Loader2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { isGoogleAuthError } from "@/lib/authError";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SiX, SiFacebook, SiInstagram, SiYoutube, SiLinkedin, SiTiktok, SiPinterest } from "react-icons/si";
 import {
@@ -208,7 +209,7 @@ export default function SocialMedia({ selectedClientId, setSelectedClientId }: S
       });
     },
     onError: (error: any) => {
-      showApiError("Failed to Update Social Media", parseApiError(error, "Something went wrong. Please check your connection and try again."));
+      showApiError("Failed to Update Social Media", parseApiError(error, "Something went wrong. Please check your connection and try again."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 

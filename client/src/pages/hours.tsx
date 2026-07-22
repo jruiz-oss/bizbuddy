@@ -13,6 +13,7 @@ import { useLocation, Link as WouterLink } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { isGoogleAuthError } from "@/lib/authError";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
@@ -322,7 +323,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
     },
     onError: (error: any) => {
-      showApiError("Failed to Update Hours", parseApiError(error, "Failed to update hours. Your Google session may have expired."));
+      showApiError("Failed to Update Hours", parseApiError(error, "Failed to update hours."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 

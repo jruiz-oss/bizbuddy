@@ -11,6 +11,7 @@ import { formatPhoenixDateTime } from "@/lib/formatDate";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { isGoogleAuthError } from "@/lib/authError";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import {
   AlertDialog,
@@ -213,19 +214,19 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
 
     eventSource.addEventListener('error', (event: any) => {
       // Custom error event from server — extract the message if available
-      let detail = "Failed to scan for suggested edits. Your Google session may have expired.";
+      let detail = "Failed to scan for suggested edits. Please try again.";
       try {
         const data = JSON.parse(event.data);
         if (data?.message) detail = data.message;
       } catch {}
-      showApiError("Scan Failed", detail);
+      showApiError("Scan Failed", detail, { isAuthError: isGoogleAuthError(detail) });
       setIsScanning(false);
       setScanProgress(null);
       eventSource.close();
     });
 
     eventSource.onerror = () => {
-      showApiError("Scan Failed", "Connection error during scan. Your Google session may have expired.");
+      showApiError("Scan Failed", "Connection error during scan. Please check your connection and try again.");
       setIsScanning(false);
       setScanProgress(null);
       eventSource.close();
@@ -281,7 +282,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       queryClient.invalidateQueries({ queryKey: ["/api/activity-log"] });
     },
     onError: (error: any) => {
-      showApiError("Failed to Accept Update", parseApiError(error, "Failed to accept the suggested update. Your Google session may have expired."));
+      showApiError("Failed to Accept Update", parseApiError(error, "Failed to accept the suggested update."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 
@@ -334,7 +335,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       queryClient.invalidateQueries({ queryKey: ["/api/activity-log"] });
     },
     onError: (error: any) => {
-      showApiError("Failed to Reject Update", parseApiError(error, "Failed to reject the suggested update. Your Google session may have expired."));
+      showApiError("Failed to Reject Update", parseApiError(error, "Failed to reject the suggested update."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 
@@ -357,7 +358,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       setUndoingId(null);
     },
     onError: (error: any) => {
-      showApiError("Failed to Undo Change", parseApiError(error, "Failed to undo the change. Your Google session may have expired."));
+      showApiError("Failed to Undo Change", parseApiError(error, "Failed to undo the change."), { isAuthError: isGoogleAuthError(error) });
       setUndoingId(null);
     },
   });

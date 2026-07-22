@@ -4,10 +4,17 @@ interface ApiErrorState {
   open: boolean;
   title: string;
   message: string;
+  isAuthError: boolean;
+}
+
+interface ShowApiErrorOptions {
+  /** Only true when the failure is a genuine Google session/auth problem that
+   *  re-authenticating would fix. Gates the "Re-authenticate with Google" CTA. */
+  isAuthError?: boolean;
 }
 
 interface ApiErrorContextValue {
-  showApiError: (title: string, message: string) => void;
+  showApiError: (title: string, message: string, options?: ShowApiErrorOptions) => void;
   clearApiError: () => void;
   error: ApiErrorState;
 }
@@ -15,14 +22,14 @@ interface ApiErrorContextValue {
 const ApiErrorContext = createContext<ApiErrorContextValue | null>(null);
 
 export function ApiErrorProvider({ children }: { children: ReactNode }) {
-  const [error, setError] = useState<ApiErrorState>({ open: false, title: "", message: "" });
+  const [error, setError] = useState<ApiErrorState>({ open: false, title: "", message: "", isAuthError: false });
 
-  const showApiError = useCallback((title: string, message: string) => {
-    setError({ open: true, title, message });
+  const showApiError = useCallback((title: string, message: string, options?: ShowApiErrorOptions) => {
+    setError({ open: true, title, message, isAuthError: options?.isAuthError ?? false });
   }, []);
 
   const clearApiError = useCallback(() => {
-    setError({ open: false, title: "", message: "" });
+    setError({ open: false, title: "", message: "", isAuthError: false });
   }, []);
 
   return (

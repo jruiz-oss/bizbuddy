@@ -53,23 +53,27 @@ export function ApiErrorModal() {
           </div>
         </div>
 
-        {/* Helper note */}
-        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
-          This is often caused by an expired Google session. Re-authenticating usually fixes it.
-        </div>
+        {/* Helper note — only for genuine auth failures, where re-auth is the fix */}
+        {error.isAuthError && (
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+            This is often caused by an expired Google session. Re-authenticating usually fixes it.
+          </div>
+        )}
 
         {/* Actions */}
         <div className="flex flex-col gap-2">
+          {error.isAuthError && (
+            <Button
+              onClick={handleReauth}
+              className="w-full gap-2"
+              data-testid="api-error-reauth-button"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Re-authenticate with Google
+            </Button>
+          )}
           <Button
-            onClick={handleReauth}
-            className="w-full gap-2"
-            data-testid="api-error-reauth-button"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Re-authenticate with Google
-          </Button>
-          <Button
-            variant="ghost"
+            variant={error.isAuthError ? "ghost" : "default"}
             onClick={clearApiError}
             className="w-full"
             data-testid="api-error-dismiss-button"

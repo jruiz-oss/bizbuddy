@@ -17,6 +17,7 @@ import { eq, and, or, desc, inArray, gte, lte, sql } from "drizzle-orm";
 import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
+import { validateGbpImage } from "./utils/image-dimensions";
 
 // Resolve the acting local user from the SERVER session (set at login).
 // Never trust the client-supplied X-Local-User-Id header for authorization —
@@ -24,6 +25,28 @@ import { generateReviewEmailHtml } from "./utils/review-email-template";
 function getLocalUserId(req: any): string | null {
   const localUserId = req.session?.localUserId;
   return typeof localUserId === 'string' ? localUserId : null;
+}
+
+// Decide whether a job item's error text reflects a genuine Google auth problem
+// (expired/revoked session) that re-authenticating would fix — as opposed to a
+// content/API error like a 500 INTERNAL (e.g. an image below GBP's min size),
+// which re-auth does nothing for. Only these signals should surface the re-auth CTA.
+function isGoogleAuthError(errorText?: string | null): boolean {
+  if (!errorText) return false;
+  const t = errorText.toLowerCase();
+  return (
+    /\b(401|403)\b/.test(t) ||
+    t.includes("unauthenticated") ||
+    t.includes("permission_denied") ||
+    t.includes("invalid_grant") ||
+    t.includes("invalid credentials") ||
+    t.includes("invalid authentication") ||
+    t.includes("not authenticated") ||
+    t.includes("re-authenticate") ||
+    t.includes("reauthenticate") ||
+    t.includes("token has been expired or revoked") ||
+    t.includes("please log in")
+  );
 }
 
 function sleep(ms: number) {
@@ -379,6 +402,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(503).json({ message: "Google Cloud Storage not configured (GOOGLE_CLOUD_PROJECT_ID missing)" });
       }
 
+      // Reject images below GBP's minimum size up front, so users get a clear
+      // reason here instead of an opaque 500 INTERNAL when the post is published.
+      const imageCheck = validateGbpImage(req.file.buffer);
+      if (!imageCheck.ok) {
+        return res.status(400).json({ message: imageCheck.message });
+      }
+
       // Resolve client name for folder placement (optional — falls back to bucket root)
       let folder: string | undefined;
       const clientId = req.body?.clientId;
@@ -459,6 +489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Pull the first error message from failed job items so the UI can show why it failed
       let errorMessage: string | undefined;
+      let isAuthError = false;
       const isDone = job.status === "failed" || job.status === "partial" || job.status === "success";
       if (isDone && (job.errorCount ?? 0) > 0) {
         const items = await storage.getJobItems(job.id);
@@ -467,6 +498,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Strip very long stack/system messages down to the human-readable first sentence
           errorMessage = firstFailed.errorText.split("\n")[0].slice(0, 300);
         }
+        // Only flag as an auth error when a failed item's error genuinely indicates
+        // an expired/invalid Google session. Google API errors like a 500 INTERNAL
+        // (e.g. an image below GBP's minimum size) must NOT trigger the re-auth prompt.
+        isAuthError = items.some(i => i.status === "failed" && isGoogleAuthError(i.errorText));
       }
 
       const progress = {
@@ -479,6 +514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         percent: job.totalItems > 0 ? Math.round(((job.processedCount || 0) / job.totalItems) * 100) : 0,
         step: job.status === "queued" ? 1 : job.status === "running" ? 2 : 3,
         errorMessage,
+        isAuthError,
       };
       
       res.json(progress);

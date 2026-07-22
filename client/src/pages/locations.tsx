@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { isGoogleAuthError } from "@/lib/authError";
 import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -242,6 +243,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
       isAuthError
         ? "Your session has expired. Please log in again to see your locations."
         : `Failed to load locations: ${parseApiError(locationsError)}`,
+      { isAuthError },
     );
   }, [isLocationsError, locationsError, showApiError]);
   const { data: hiddenLocations = [] } = useQuery<ClientLocation[]>({
@@ -294,7 +296,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
             const body = (await r.json().catch(() => ({}))) as { accountState?: string };
             if (body?.accountState === "needs_reauth") {
               queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
-              showApiError("Reconnect required", "Your Google connection has expired. Please reconnect your account.");
+              showApiError("Reconnect required", "Your Google connection has expired. Please reconnect your account.", { isAuthError: true });
             }
           }
         } catch (err) {
@@ -314,7 +316,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
       toast({ title: "Sync complete", description: "Locations refreshed from Google." });
     },
     onError: (error: unknown) => {
-      showApiError("Sync Failed", parseApiError(error, "Could not sync locations from Google."));
+      showApiError("Sync Failed", parseApiError(error, "Could not sync locations from Google."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 
@@ -333,7 +335,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
       setEditingLocation(null);
     },
     onError: (error: unknown) => {
-      showApiError("Failed to update", parseApiError(error, "Something went wrong."));
+      showApiError("Failed to update", parseApiError(error, "Something went wrong."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 

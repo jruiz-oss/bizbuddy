@@ -196,7 +196,7 @@ export function JobProgressToast({ jobId, jobType, onComplete }: JobProgressToas
         {/* Action buttons — only shown when complete */}
         {isDone && (
           <div className="flex flex-col gap-2">
-            {(progress.status === "failed" || progress.status === "partial") && (
+            {(progress.status === "failed" || progress.status === "partial") && progress.isAuthError && (
               <Button
                 onClick={() => { window.location.href = getApiUrl("/auth/google"); }}
                 className="w-full gap-2"

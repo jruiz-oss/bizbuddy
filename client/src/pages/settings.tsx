@@ -1473,7 +1473,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     size="sm"
                     onClick={() => showApiError(
                       "Failed to Update Hours",
-                      "Request failed with status 401: Unauthorized. The OAuth token has expired or been revoked."
+                      "Request failed with status 401: Unauthorized. The OAuth token has expired or been revoked.",
+                      { isAuthError: true }
                     )}
                     data-testid="button-test-error-modal"
                   >

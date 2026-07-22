@@ -14,6 +14,7 @@ import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { isGoogleAuthError } from "@/lib/authError";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { formatScheduledDateTime } from "@/lib/formatDate";
 import { useJobProgressContext } from "@/contexts/job-progress-context";
@@ -114,6 +115,25 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
       toast({
         title: "Unsupported file",
         description: "Use JPG, PNG, or GIF (HEIC/HEIF not supported)",
+        variant: "destructive",
+      });
+      e.target.value = "";
+      return;
+    }
+
+    // Google Business Profile rejects post images below 250×250px (surfaced as an
+    // opaque 500). Catch it instantly here before the upload round-trip.
+    const dims = await new Promise<{ width: number; height: number } | null>((resolve) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => { resolve({ width: img.naturalWidth, height: img.naturalHeight }); URL.revokeObjectURL(objectUrl); };
+      img.onerror = () => { resolve(null); URL.revokeObjectURL(objectUrl); };
+      img.src = objectUrl;
+    });
+    if (dims && (dims.width < 250 || dims.height < 250)) {
+      toast({
+        title: "Image too small",
+        description: `This image is ${dims.width}×${dims.height}px. Google Business Profile requires at least 250×250px.`,
         variant: "destructive",
       });
       e.target.value = "";
@@ -319,7 +339,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
       queryClient.invalidateQueries({ queryKey: ["/api/jobs"] });
     },
     onError: (error: any) => {
-      showApiError("Failed to Create Post", parseApiError(error, "Failed to create post. Your Google session may have expired."));
+      showApiError("Failed to Create Post", parseApiError(error, "Failed to create post."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 
@@ -342,7 +362,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
       setPostToDelete(null);
     },
     onError: (error: any) => {
-      showApiError("Failed to Delete Post", parseApiError(error, "Failed to delete post. Your Google session may have expired."));
+      showApiError("Failed to Delete Post", parseApiError(error, "Failed to delete post."), { isAuthError: isGoogleAuthError(error) });
     },
   });
 

@@ -215,6 +215,7 @@ export default function Dashboard({
       isAuthError
         ? "Your session has expired. Please log in again."
         : `Failed to load dashboard data: ${parseApiError(failedQuery)}`,
+      { isAuthError },
     );
   }, [isClientsError, clientsError, isLocationsError, locationsError, showApiError]);
 
