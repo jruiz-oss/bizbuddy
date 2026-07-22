@@ -7,6 +7,12 @@ class GoogleOAuthAuth {
   private mybusinessbusinessinformation: any;
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
+  private connectedEmail: string | null = null;
+  // Set to true when a token refresh fails because the refresh token itself is
+  // dead (revoked, password change, >6mo idle). This is the ONLY case that
+  // genuinely requires a human to re-run Google OAuth — surfaced via getStatus()
+  // so the UI can prompt precisely instead of guessing.
+  private needsReauth = false;
 
   constructor() {
     try {
@@ -36,6 +42,8 @@ class GoogleOAuthAuth {
         if (tokens.access_token) {
           this.accessToken = tokens.access_token;
           if (tokens.refresh_token) this.refreshToken = tokens.refresh_token;
+          // A successful token event means the refresh token is alive again.
+          this.needsReauth = false;
           try {
             await this.saveSharedConnection(this.accessToken!, this.refreshToken);
             console.log('🔄 Persisted refreshed access token to shared connection');
@@ -105,6 +113,8 @@ class GoogleOAuthAuth {
       
       this.accessToken = tokens.access_token || null;
       this.refreshToken = tokens.refresh_token || null;
+      // A fresh, successful OAuth clears any prior "refresh token dead" state.
+      this.needsReauth = false;
 
       // Initialize API clients with authenticated OAuth client
       this.initApiClients();
@@ -122,21 +132,53 @@ class GoogleOAuthAuth {
     }
   }
 
-  // Restore tokens from database (e.g., after server restart)
+  // Restore tokens from database (e.g., after server restart, or lazy hydration
+  // on any server instance that hasn't loaded the shared connection yet).
   async restoreTokens(accessToken: string, refreshToken?: string | null) {
     try {
       this.accessToken = accessToken;
       this.refreshToken = refreshToken || null;
-      
+
+      // We only persist access + refresh tokens to the shared row, NOT the
+      // access token's expiry. Without an `expiry_date`, google-auth-library
+      // assumes the access token is still valid and never refreshes it — so an
+      // access token that expired while the server was down (or since it was
+      // last written, ~1h ago) gets sent stale and Google returns 401. That was
+      // the root cause of the intermittent "please re-authenticate" prompts.
+      //
+      // When we have a refresh token, mark the access token as already-expired
+      // (`expiry_date: 1`). That forces the library to transparently mint a
+      // fresh access token from the refresh token on first use — no human
+      // needed. We then proactively trigger that refresh right here so the
+      // connection is immediately usable for background jobs and the new token
+      // + its real expiry get persisted via the 'tokens' listener above.
       this.oauth2Client.setCredentials({
         access_token: accessToken,
-        refresh_token: refreshToken || undefined
+        refresh_token: refreshToken || undefined,
+        ...(refreshToken ? { expiry_date: 1 } : {}),
       });
 
       // Initialize API clients with restored credentials
       this.initApiClients();
 
-      console.log('✅ OAuth tokens restored from database');
+      if (refreshToken) {
+        try {
+          // Triggers a refresh because expiry_date=1 marks the token expired.
+          // On success the 'tokens' listener persists the fresh token + expiry
+          // and clears needsReauth.
+          await this.oauth2Client.getAccessToken();
+          console.log('✅ OAuth tokens restored and refreshed from database');
+        } catch (refreshErr: any) {
+          // The refresh token itself is dead — this is the only case that truly
+          // needs an admin to re-run Google OAuth. Flag it so getStatus() can
+          // tell the UI to prompt precisely (instead of the old guessing game).
+          const msg = refreshErr?.response?.data?.error || refreshErr?.message || refreshErr;
+          this.needsReauth = true;
+          console.warn('⚠️ Shared Google refresh token appears dead — re-auth required:', msg);
+        }
+      } else {
+        console.log('✅ OAuth tokens restored from database (no refresh token — cannot auto-refresh)');
+      }
     } catch (error) {
       console.error('❌ Error restoring tokens:', error);
       throw new Error('Failed to restore authentication tokens');
@@ -182,7 +224,10 @@ class GoogleOAuthAuth {
     };
     if (refreshToken) updateValues.refreshToken = refreshToken;
     if (connectedByUserId) updateValues.connectedByUserId = connectedByUserId;
-    if (connectedEmail) updateValues.connectedEmail = connectedEmail;
+    if (connectedEmail) {
+      updateValues.connectedEmail = connectedEmail;
+      this.connectedEmail = connectedEmail;
+    }
 
     await db
       .insert(googleConnection)
@@ -209,6 +254,7 @@ class GoogleOAuthAuth {
         return false;
       }
 
+      this.connectedEmail = row.connectedEmail ?? null;
       await this.restoreTokens(row.accessToken, row.refreshToken);
       console.log('✅ Loaded shared Google connection' + (row.connectedEmail ? ` (connected by ${row.connectedEmail})` : ''));
       return this.isAuthenticated();
@@ -245,6 +291,19 @@ class GoogleOAuthAuth {
   // Check if user is authenticated
   isAuthenticated() {
     return !!this.accessToken && !!this.mybusinessaccountmanagement;
+  }
+
+  // Richer connection status for the /api/auth/status endpoint. `authenticated`
+  // stays true whenever we have usable credentials in memory; `needsReconnect`
+  // is true only when the shared refresh token is dead and an admin must re-run
+  // Google OAuth. `connectedEmail` tells the team WHICH Google account to
+  // reconnect, so it stops being a guessing game.
+  getStatus() {
+    return {
+      authenticated: this.isAuthenticated(),
+      needsReconnect: this.needsReauth,
+      connectedEmail: this.connectedEmail,
+    };
   }
 
   // Get user info from Google
@@ -1536,6 +1595,8 @@ class GoogleOAuthAuth {
       // Clear all tokens and credentials
       this.accessToken = null;
       this.refreshToken = null;
+      this.connectedEmail = null;
+      this.needsReauth = false;
       this.mybusinessaccountmanagement = null;
       this.mybusinessbusinessinformation = null;
       

@@ -29,6 +29,7 @@ import { PlatformSelectionModal } from "@/components/modals/platform-selection-m
 import { PlatformSwitchButton } from "@/components/platform-switch-button";
 import { ApiErrorProvider } from "@/contexts/api-error-context";
 import { ApiErrorModal } from "@/components/api-error-modal";
+import { ReconnectBanner } from "@/components/reconnect-banner";
 import { Terminal } from "lucide-react";
 
 interface RouterProps {
@@ -96,6 +97,7 @@ function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps
         </div>
       )}
 
+      <ReconnectBanner />
       <LocalUserSelectionModal open={showSelectionModal} />
       <PlatformSelectionModal open={showPlatformModal} />
       <FloatingUserButton />

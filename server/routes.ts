@@ -757,8 +757,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // single DB row — NOT on the requesting user's session. Load it if the
       // in-memory singleton isn't populated yet (e.g. right after a restart).
       const authenticated = await googleOAuthAuth.ensureAuthenticated();
-      console.log('🔍 Auth status - shared Google connection:', authenticated, 'Session userId:', req.session.userId);
-      res.json({ authenticated });
+      const status = googleOAuthAuth.getStatus();
+      console.log('🔍 Auth status - shared Google connection:', authenticated, 'needsReconnect:', status.needsReconnect, 'Session userId:', req.session.userId);
+      // `authenticated` kept for backward compatibility; `needsReconnect` +
+      // `connectedEmail` let the UI prompt precisely only when a real admin
+      // reconnect is required.
+      res.json({
+        authenticated,
+        needsReconnect: status.needsReconnect,
+        connectedEmail: status.connectedEmail,
+      });
     } catch (error) {
       console.error('Auth status error:', error);
       res.json({ authenticated: false });
