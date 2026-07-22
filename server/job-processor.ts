@@ -26,7 +26,7 @@ export interface JobProcessorOptions {
 
 export const defaultOptions: JobProcessorOptions = {
   rateLimit: 3, // 3 requests per second
-  batchSize: 15,
+  batchSize: 15, // only used for progress-reporting granularity now, not concurrency
   maxRetries: 3,
   retryDelay: 2000, // 2 seconds base delay
 };
@@ -79,31 +79,46 @@ export async function processJob(jobId: string, options: JobProcessorOptions = d
     emitProgress(jobId, updatedJob!, 0, 0, 0);
     
     const items = await storage.getJobItems(jobId);
-    
-    // Process items in batches with rate limiting
-    const batches = chunkArray(items, options.batchSize);
+
+    // Process items ONE AT A TIME with a real delay between each request.
+    // Previously this ran in batches of `batchSize` items fired concurrently
+    // via Promise.allSettled, with the rate-limit delay applied only between
+    // batches — so a "3 requests/sec" limit actually meant bursts of up to
+    // 15 simultaneous createPost calls hitting the same GBP account with
+    // near-identical content. Google's Local Posts API appears to silently
+    // reject that pattern (bulk near-duplicate content posted in a burst) as
+    // abuse, returning a generic INTERNAL 500 instead of a clear rate-limit
+    // or policy error — which matches bulk post jobs failing 100% across
+    // every location, on every retry. Spacing real requests out at the
+    // configured rate avoids that burst pattern entirely.
     let totalProcessed = 0;
-    
-    for (const batch of batches) {
-      await processBatch(batch, job, options, jobId);
-      
-      // Update progress after each batch
-      totalProcessed += batch.length;
-      const updatedItems = await storage.getJobItems(jobId);
-      const successCount = updatedItems.filter(item => item.status === "success").length;
-      const errorCount = updatedItems.filter(item => item.status === "failed").length;
-      
-      await storage.updateJob(jobId, {
-        successCount,
-        errorCount,
-        processedCount: totalProcessed
-      });
-      
-      const currentJob = await storage.getJob(jobId);
-      emitProgress(jobId, currentJob!, successCount, errorCount, totalProcessed);
-      
-      // Rate limiting delay between batches
-      if (batches.indexOf(batch) < batches.length - 1) {
+
+    for (let i = 0; i < items.length; i++) {
+      await processJobItem(items[i], job, options);
+      totalProcessed++;
+
+      // Update progress periodically (every batchSize items, or on the last
+      // item) rather than after every single request, to avoid hammering
+      // storage with writes.
+      const isLastItem = i === items.length - 1;
+      if (isLastItem || (i + 1) % options.batchSize === 0) {
+        const updatedItems = await storage.getJobItems(jobId);
+        const successCount = updatedItems.filter(item => item.status === "success").length;
+        const errorCount = updatedItems.filter(item => item.status === "failed").length;
+
+        await storage.updateJob(jobId, {
+          successCount,
+          errorCount,
+          processedCount: totalProcessed
+        });
+
+        const currentJob = await storage.getJob(jobId);
+        emitProgress(jobId, currentJob!, successCount, errorCount, totalProcessed);
+      }
+
+      // Real per-request rate limiting — space out actual API calls, not
+      // just batches of them.
+      if (!isLastItem) {
         await delay(1000 / options.rateLimit);
       }
     }
@@ -137,11 +152,6 @@ export async function processJob(jobId: string, options: JobProcessorOptions = d
       completedAt: new Date()
     });
   }
-}
-
-async function processBatch(items: JobItem[], job: Job, options: JobProcessorOptions, jobId: string): Promise<void> {
-  const promises = items.map(item => processJobItem(item, job, options));
-  await Promise.allSettled(promises);
 }
 
 async function processJobItem(item: JobItem, job: Job, options: JobProcessorOptions, retryCount = 0): Promise<void> {
@@ -276,14 +286,6 @@ async function simulateExecution(item: JobItem, job: Job): Promise<void> {
     console.error(`❌ Error executing job item ${item.id}:`, error);
     throw error;
   }
-}
-
-function chunkArray<T>(array: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
-  }
-  return chunks;
 }
 
 function delay(ms: number): Promise<void> {

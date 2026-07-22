@@ -74,9 +74,33 @@ class GoogleStorageService {
 
       const encodedPath = uniqueFileName.split('/').map(encodeURIComponent).join('/');
       const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${encodedPath}`;
-      
-      console.log(`✅ Image uploaded successfully: ${publicUrl}`);
-      
+
+      // predefinedAcl: 'publicRead' silently no-ops if the bucket has Uniform
+      // Bucket-Level Access enabled — the upload still "succeeds" and this
+      // function would happily hand back a URL that Google's own servers
+      // can't fetch. That surfaces later as an opaque 500 INTERNAL from the
+      // GBP API on every location in a bulk post job, with no indication the
+      // image was the actual problem. Verify the object is truly public here
+      // so a bad upload fails loudly and immediately instead of poisoning a
+      // whole bulk job downstream.
+      try {
+        const check = await fetch(publicUrl, { method: 'HEAD' });
+        if (!check.ok) {
+          throw new Error(
+            `Image was uploaded but is not publicly accessible (HTTP ${check.status} on ${publicUrl}). ` +
+            `This usually means the "${this.bucketName}" bucket has Uniform Bucket-Level Access enabled, ` +
+            `which silently ignores the per-object public-read ACL we set on upload. ` +
+            `Grant "allUsers" the Storage Object Viewer role on the bucket (or on this object) in GCP IAM, then retry.`
+          );
+        }
+      } catch (verifyError: any) {
+        // Re-throw as a clear, actionable error rather than letting a bad
+        // image slip through and fail every location in the bulk job later.
+        throw new Error(verifyError.message || `Failed to verify public access for uploaded image: ${publicUrl}`);
+      }
+
+      console.log(`✅ Image uploaded successfully and verified public: ${publicUrl}`);
+
       return publicUrl;
     } catch (error: any) {
       console.error('❌ Error uploading image to Google Cloud Storage:', error.message || error);
