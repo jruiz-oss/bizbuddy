@@ -162,6 +162,47 @@ app.use((req, res, next) => {
       console.error("Failed to load shared Google connection at startup:", e);
     }
 
+    // A suggested-edit scan runs for minutes in-process, so a restart mid-scan
+    // would otherwise leave its row stuck at "running" forever and the UI
+    // spinning with it.
+    //
+    // Two mechanisms, deliberately:
+    //  1. SIGTERM (what Railway sends on every deploy) — the process that owns
+    //     the scan marks its own runs interrupted. Precise, and safe during a
+    //     rolling deploy where a new instance is already up.
+    //  2. A heartbeat sweep — the backstop for a hard crash that never gets to
+    //     run (1). Never keyed off "this process just booted", because during a
+    //     rolling deploy that would flag a scan still running on the old one.
+    try {
+      const { markInterruptedScans, shutdownActiveScans } = await import(
+        "./suggested-edits-scanner"
+      );
+
+      // Not awaited: a slow/unreachable DB here must not delay opening the port
+      // and failing Railway's healthcheck.
+      markInterruptedScans().catch((e) =>
+        console.error("Startup interrupted-scan sweep failed:", e),
+      );
+      setInterval(() => {
+        markInterruptedScans("Scan stopped responding and was marked interrupted.").catch((e) =>
+          console.error("Interrupted-scan sweep failed:", e),
+        );
+      }, 60 * 1000).unref();
+
+      let shuttingDown = false;
+      const onSignal = (signal: string) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        shutdownActiveScans(`Server ${signal === "SIGINT" ? "stopped" : "restarted"} while the scan was running.`)
+          .catch((e) => console.error("Failed to flag scans on shutdown:", e))
+          .finally(() => process.exit(0));
+      };
+      process.once("SIGTERM", () => onSignal("SIGTERM"));
+      process.once("SIGINT", () => onSignal("SIGINT"));
+    } catch (e) {
+      console.error("Failed to set up scan interruption handling:", e);
+    }
+
     // Initialize scheduler for scheduled posts, hours, and review emails
     initializeScheduler();
 

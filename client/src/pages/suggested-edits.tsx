@@ -1,5 +1,5 @@
 import { SideNav } from "@/components/SideNav";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { Loader2, RefreshCw, Check, X, MapPin, ArrowRight, Lightbulb, BarChart3,
 import { formatPhoenixDateTime } from "@/lib/formatDate";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
+import { useScanProgress } from "@/contexts/scan-progress-context";
+import { ScanStatusBanner } from "@/components/scan-status-banner";
 import { parseApiError } from "@/lib/parseApiError";
 import { isGoogleAuthError } from "@/lib/authError";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
@@ -48,18 +50,13 @@ interface SuggestedEditsProps {
 interface ScanResult {
   locationId: string;
   locationName: string;
-  locationAddress: string;
+  // Nullable: client_locations.address is nullable.
+  locationAddress: string | null;
   gbpLocationName: string;
   hasUpdates: boolean;
   originalLocation: any;
   suggestedLocation: any;
   diffMask: string;
-}
-
-interface ScanResponse {
-  scanned: number;
-  withUpdates: number;
-  results: ScanResult[];
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -84,17 +81,28 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   const { toast } = useToast();
   const { showApiError } = useApiError();
   const [location] = useLocation();
-  const [scanResults, setScanResults] = useState<ScanResult[]>([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState<{ scanned: number; total: number } | null>(null);
+
+  // Scan state lives in ScanProgressProvider, which reads it from the server.
+  // Keeping it out of this component is what lets a run survive navigation and
+  // page reloads — this page is just one view onto it.
+  const {
+    scan,
+    results: scanResults,
+    setResults: setScanResults,
+    isScanning,
+    isLoadingScan,
+    startScan: startScanRun,
+    cancelScan,
+    startError,
+  } = useScanProgress();
+
   const [selectedEdit, setSelectedEdit] = useState<ScanResult | null>(null);
   const [selectedField, setSelectedField] = useState<string | null>(null);
   const [actionType, setActionType] = useState<"accept" | "reject" | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [lastScannedTime, setLastScannedTime] = useState<Date | null>(() => {
-    const saved = localStorage.getItem('suggestedEdits_lastScannedTime');
-    return saved ? new Date(saved) : null;
-  });
+
+  // Time of the last run that actually completed, from the run record itself.
+  const lastScannedTime = scan?.completedAt ? new Date(scan.completedAt) : null;
   const [viewingField, setViewingField] = useState<{ locationId: string; fieldName: string; originalValue: any; suggestedValue: any } | null>(null);
   const [viewingHistory, setViewingHistory] = useState<ActionHistory | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -152,86 +160,55 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
 
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(10);
 
-  // Scan function using SSE for progress
-  const startScan = (folderIds: string[] = [], locationIds: string[] = []) => {
-    setIsScanning(true);
-    setScanProgress(null);
-    setScanResults([]);
+  // Kick off a scan. This only creates the run — the scan itself continues on
+  // the server whether or not this page (or the browser) stays open.
+  const startScan = async (folderIds: string[] = [], locationIds: string[] = []) => {
     setShowScanOptions(false);
-
-    // Build URL — use getApiUrl so it points to Railway in production (not Vercel)
-    let url = getApiUrl("/api/suggested-edits/scan");
-    const params = new URLSearchParams();
-    if (folderIds.length > 0) {
-      params.set("folderIds", folderIds.join(","));
-    }
-    if (locationIds.length > 0) {
-      params.set("locationIds", locationIds.join(","));
-    }
-    if (params.toString()) {
-      url += "?" + params.toString();
-    }
-
-    const eventSource = new EventSource(url, { withCredentials: true });
-
-    eventSource.addEventListener('start', (event) => {
-      const data = JSON.parse(event.data);
-      setScanProgress({ scanned: 0, total: data.total });
-    });
-
-    eventSource.addEventListener('progress', (event) => {
-      const data = JSON.parse(event.data);
-      setScanProgress({ scanned: data.scanned, total: data.total });
-    });
-
-    eventSource.addEventListener('complete', (event) => {
-      const data = JSON.parse(event.data);
-      setScanResults(data.results);
-      const now = new Date();
-      setLastScannedTime(now);
-      localStorage.setItem('suggestedEdits_lastScannedTime', now.toISOString());
-      // Set first category with results as default
-      const grouped = groupResultsByCategory(data.results);
-      const firstCat = editCategories.find(c => (grouped[c.id] || []).length > 0);
-      if (firstCat) setSelectedCategoryId(firstCat.id);
-
-      if (data.errored > 0) {
-        // Some locations failed — warn the user with the actual error message
-        const errorHint = data.firstError
-          ? `Google API error: ${data.firstError}`
-          : "Some locations could not be checked.";
-        toast({
-          title: "Scan Complete (with errors)",
-          description: `Found ${data.withUpdates} update(s). ${data.errored} location(s) failed. ${errorHint}`,
-          variant: "destructive",
-        });
-      }
-      // No toast on clean success — the result (or "no suggestions" message) is shown inline
-      setIsScanning(false);
-      setScanProgress(null);
-      eventSource.close();
-    });
-
-    eventSource.addEventListener('error', (event: any) => {
-      // Custom error event from server — extract the message if available
-      let detail = "Failed to scan for suggested edits. Please try again.";
-      try {
-        const data = JSON.parse(event.data);
-        if (data?.message) detail = data.message;
-      } catch {}
+    try {
+      await startScanRun(folderIds, locationIds);
+    } catch (error: any) {
+      const detail = parseApiError(error, "Failed to start the scan. Please try again.");
       showApiError("Scan Failed", detail, { isAuthError: isGoogleAuthError(detail) });
-      setIsScanning(false);
-      setScanProgress(null);
-      eventSource.close();
-    });
-
-    eventSource.onerror = () => {
-      showApiError("Scan Failed", "Connection error during scan. Please check your connection and try again.");
-      setIsScanning(false);
-      setScanProgress(null);
-      eventSource.close();
-    };
+    }
   };
+
+  // Surface a failed run the same way the old inline scan did. Keyed on scan id
+  // so re-renders never re-fire it for a run already reported.
+  const reportedScanRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!scan || scan.status === "running") return;
+    if (reportedScanRef.current === scan.scanId) return;
+
+    // A run that was already finished when we first saw it (page load, refresh,
+    // someone else's scan from yesterday) is history, not news — the banner
+    // states its outcome. Only interrupt for a run that finished while watching.
+    const justFinished =
+      !!scan.completedAt && Date.now() - new Date(scan.completedAt).getTime() < 60_000;
+    reportedScanRef.current = scan.scanId;
+    if (!justFinished) return;
+
+    if (scan.status === "failed") {
+      const detail = scan.firstError || "Failed to scan for suggested edits. Please try again.";
+      showApiError("Scan Failed", detail, { isAuthError: isGoogleAuthError(detail) });
+    } else if (scan.status === "partial") {
+      toast({
+        title: "Scan Complete (with errors)",
+        description: `Found ${scan.withUpdatesCount} update(s). ${scan.erroredCount} location(s) failed.${scan.firstError ? ` Google API error: ${scan.firstError}` : ""}`,
+        variant: "destructive",
+      });
+    }
+    // Clean success and cancelled/interrupted are shown inline in the banner —
+    // no toast, matching the previous behavior of staying quiet on success.
+  }, [scan?.scanId, scan?.status]);
+
+  // Default to the first category that actually has results.
+  useEffect(() => {
+    if (scanResults.length === 0) return;
+    const grouped = groupResultsByCategory(scanResults);
+    if (selectedCategoryId && (grouped[selectedCategoryId] || []).length > 0) return;
+    const firstCat = editCategories.find(c => (grouped[c.id] || []).length > 0);
+    if (firstCat) setSelectedCategoryId(firstCat.id);
+  }, [scanResults]);
 
   // Accept mutation
   const acceptMutation = useMutation({
@@ -923,7 +900,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
             <div>
               <p className="text-[10px] uppercase tracking-[0.18em] text-gray-500 font-medium mb-1">QUALITY</p>
               <h1 className="text-3xl font-semibold text-gray-900 tracking-tight" data-testid="text-page-title">Suggested Edits</h1>
-              {lastScannedTime && (
+              {lastScannedTime && !isScanning && (
                 <p className="text-xs text-gray-400 mt-1">Last scanned {formatPhoenixDateTime(lastScannedTime)}</p>
               )}
             </div>
@@ -1039,8 +1016,8 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                   {isScanning ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      {scanProgress 
-                        ? `Scanning ${scanProgress.scanned} of ${scanProgress.total}...`
+                      {scan && scan.totalLocations > 0
+                        ? `Scanning ${scan.scannedCount} of ${scan.totalLocations}...`
                         : 'Starting scan...'}
                     </>
                   ) : selectionCount > 0 ? (
@@ -1057,6 +1034,25 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                 </Button>
               </div>
             </div>
+
+          {/* Run status. The scan is a server-side run with a record, so this
+              can always say exactly what happened — including for runs started
+              in another tab, or ones killed by a deploy. */}
+          <ScanStatusBanner
+            scan={scan}
+            isLoading={isLoadingScan}
+            startError={startError}
+            onCancel={cancelScan}
+            // Repeat the scope of the run being reported on, not whatever
+            // happens to be selected in this tab — otherwise "Run again" on an
+            // interrupted folder scan silently rescans all 150 locations.
+            onRescan={() =>
+              startScan(
+                scan?.scope?.folderIds ?? selectedFolderIds,
+                scan?.scope?.locationIds ?? selectedLocationIds,
+              )
+            }
+          />
 
           {/* Scan Results */}
           <Card className="border-gray-200 shadow-sm rounded-2xl">
@@ -1091,9 +1087,12 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
               {(() => {
                 const filteredResults = scanResults.filter((result) => {
                   const searchLower = searchQuery.toLowerCase();
+                  // Address is nullable in client_locations — guard it. Results
+                  // are persisted now, so an unguarded null would blank this
+                  // page on every load until the next scan, not just once.
                   return (
-                    result.locationName.toLowerCase().includes(searchLower) ||
-                    result.locationAddress.toLowerCase().includes(searchLower)
+                    (result.locationName || "").toLowerCase().includes(searchLower) ||
+                    (result.locationAddress || "").toLowerCase().includes(searchLower)
                   );
                 });
 
@@ -1125,27 +1124,43 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
 
                 return availableCategories.length === 0 ? (
                   <div className="p-12 text-center">
-                    <Lightbulb className="w-8 h-8 text-gray-400 mx-auto mb-4" />
-                    {lastScannedTime ? (
+                    {isScanning ? (
                       <>
+                        <Loader2 className="w-8 h-8 text-orange-400 mx-auto mb-4 animate-spin" />
                         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                          No Pending Suggestions
+                          Scan in progress
                         </h3>
                         <p className="text-gray-600 dark:text-gray-400">
-                          Google has no suggested edits for your locations right now. Check back later.
-                        </p>
-                        <p className="text-xs text-gray-400 mt-3">
-                          Last scanned {formatPhoenixDateTime(lastScannedTime)}
+                          {scan && scan.totalLocations > 0
+                            ? `Checked ${scan.scannedCount} of ${scan.totalLocations} locations so far. Results appear here as they're found.`
+                            : "Getting the list of locations to check…"}
                         </p>
                       </>
                     ) : (
                       <>
-                        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                          No Scan Run Yet
-                        </h3>
-                        <p className="text-gray-600 dark:text-gray-400">
-                          Run a scan to check if Google has any suggested edits for your locations.
-                        </p>
+                        <Lightbulb className="w-8 h-8 text-gray-400 mx-auto mb-4" />
+                        {lastScannedTime ? (
+                          <>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                              No Pending Suggestions
+                            </h3>
+                            <p className="text-gray-600 dark:text-gray-400">
+                              Google has no suggested edits for your locations right now. Check back later.
+                            </p>
+                            <p className="text-xs text-gray-400 mt-3">
+                              Last scanned {formatPhoenixDateTime(lastScannedTime)}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                              No Scan Run Yet
+                            </h3>
+                            <p className="text-gray-600 dark:text-gray-400">
+                              Run a scan to check if Google has any suggested edits for your locations.
+                            </p>
+                          </>
+                        )}
                       </>
                     )}
                   </div>

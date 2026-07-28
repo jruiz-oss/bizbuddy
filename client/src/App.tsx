@@ -21,6 +21,8 @@ import NotFound from "@/pages/not-found";
 import AppleMaps from "@/pages/apple-maps";
 import { JobProgressProvider, useJobProgressContext } from "@/contexts/job-progress-context";
 import { JobProgressToast } from "@/components/job-progress-toast";
+import { ScanProgressProvider } from "@/contexts/scan-progress-context";
+import { ScanProgressPill } from "@/components/scan-progress-pill";
 import { LocalUserProvider, useLocalUserContext } from "@/contexts/local-user-context";
 import { LocalUserSelectionModal } from "@/components/modals/local-user-selection-modal";
 import { FloatingUserButton } from "@/components/floating-user-button";
@@ -126,6 +128,10 @@ function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps
           jobType={jobType}
         />
       )}
+
+      {/* Suggested-edits scan status — follows the user across pages so a
+          multi-minute scan is never invisible just because they navigated. */}
+      <ScanProgressPill />
     </>
   );
 }
@@ -163,7 +169,13 @@ function AppContent() {
     return <Login />;
   }
 
-  return <AuthenticatedApp selectedClientId={selectedClientId} setSelectedClientId={setSelectedClientId} />;
+  // Scan state is only meaningful once signed in — mounting the provider here
+  // keeps it from querying scan status on the login screen.
+  return (
+    <ScanProgressProvider>
+      <AuthenticatedApp selectedClientId={selectedClientId} setSelectedClientId={setSelectedClientId} />
+    </ScanProgressProvider>
+  );
 }
 
 function App() {

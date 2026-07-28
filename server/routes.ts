@@ -9,6 +9,7 @@ import { storage } from "./storage";
 import { sendScheduledReviewEmailForGroup, syncPerfData } from "./scheduler";
 import { insertClientSettingsSchema, insertJobSchema, insertAppleLocationSchema, posts, clients, jobItems, clientLocations, jobs, suggestedEdits, suggestedEditActions, activityLog, locationFolders, users, googleConnection, locationPerformanceData, type InsertClientLocation } from "@shared/schema";
 import { processJob, progressEmitter } from "./job-processor";
+import * as suggestedEditsScanner from "./suggested-edits-scanner";
 import { z } from "zod";
 import type { Response } from "express";
 import { googleStorageService } from "./google-storage-service.js";
@@ -47,40 +48,6 @@ function isGoogleAuthError(errorText?: string | null): boolean {
     t.includes("token has been expired or revoked") ||
     t.includes("please log in")
   );
-}
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// The GBP "Business Information" API's default per-minute quota is low and
-// shared across every location we scan. Bursting requests (even a handful in
-// parallel) reliably exhausts it once there are 50+ locations. Wrap calls that
-// hit this API with backoff so a transient 429/"Quota exceeded" doesn't get
-// reported as a permanent per-location error — it just waits and retries.
-function isQuotaExceededError(error: any): boolean {
-  const msg = String(error?.message || error || '');
-  return msg.includes('Quota exceeded') || msg.includes('RESOURCE_EXHAUSTED') || error?.code === 429 || error?.status === 429;
-}
-
-async function withQuotaRetry<T>(fn: () => Promise<T>, options?: { maxRetries?: number; baseDelayMs?: number }): Promise<T> {
-  const maxRetries = options?.maxRetries ?? 4;
-  const baseDelayMs = options?.baseDelayMs ?? 3000;
-  let lastError: any;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      if (!isQuotaExceededError(error) || attempt === maxRetries) {
-        throw error;
-      }
-      const delay = baseDelayMs * Math.pow(2, attempt);
-      console.warn(`⏳ Quota exceeded, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`);
-      await sleep(delay);
-    }
-  }
-  throw lastError;
 }
 
 // This is a single-agency internal tool: everything hangs off ONE Google account
@@ -4248,282 +4215,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Scan all locations for Google-suggested updates (with SSE progress streaming)
-  // Accepts optional query params: folderIds (comma-separated) and locationIds (comma-separated)
-  app.get("/api/suggested-edits/scan", async (req, res) => {
-    console.log('🚀 [SCAN] Endpoint hit — setting up SSE');
-    // Set up SSE headers (X-Accel-Buffering: no disables Railway/Nginx proxy buffering for SSE)
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
+  // ── Suggested-edit scans ───────────────────────────────────────────────────
+  // A scan is a persisted, server-side run (see server/suggested-edits-scanner.ts).
+  // It is deliberately NOT tied to the request that starts it: closing the tab,
+  // navigating away, or reloading no longer kills the scan or loses its results.
+  //
+  //   POST /api/suggested-edits/scan          → start a run, returns { scanId }
+  //   GET  /api/suggested-edits/scan/current  → running run, else most recent run
+  //   GET  /api/suggested-edits/scan/:id      → one run, including its results
+  //   GET  /api/suggested-edits/scan/:id/stream → SSE progress for one run
+  //   POST /api/suggested-edits/scan/:id/cancel → stop a running scan
+
+  // Start a scan. Body: { folderIds?: string[], locationIds?: string[] }
+  app.post("/api/suggested-edits/scan", async (req, res) => {
+    try {
+      const folderIds: string[] = Array.isArray(req.body?.folderIds) ? req.body.folderIds : [];
+      const locationIds: string[] = Array.isArray(req.body?.locationIds) ? req.body.locationIds : [];
+
+      const actorId = getLocalUserId(req);
+      const actor = actorId ? await storage.getLocalUser(actorId) : null;
+
+      const scan = await suggestedEditsScanner.startScan({
+        folderIds,
+        locationIds,
+        localUserId: actorId,
+        startedByName: actor?.name ?? null,
+      });
+
+      res.status(202).json(suggestedEditsScanner.toProgress(scan));
+    } catch (error: any) {
+      if (error?.code === "SCAN_IN_PROGRESS") {
+        // Not an error the user needs to see as a failure — just hand back the
+        // run that's already going so the UI can attach to it.
+        const existing = await suggestedEditsScanner.getScan(error.scanId);
+        return res.status(409).json({
+          message: "A scan is already running.",
+          scan: existing ? suggestedEditsScanner.toProgress(existing) : null,
+        });
+      }
+      console.error("Failed to start suggested-edits scan:", error);
+      res.status(500).json({ message: error?.message || "Failed to start scan" });
+    }
+  });
+
+  // The run the UI should be showing: whatever is running, else the last run.
+  app.get("/api/suggested-edits/scan/current", async (_req, res) => {
+    try {
+      // Sweep first so a run killed by a deploy reports "interrupted" rather
+      // than sitting at "running" forever.
+      await suggestedEditsScanner.markInterruptedScans();
+      const row =
+        (await suggestedEditsScanner.getRunningScan()) ||
+        (await suggestedEditsScanner.getLatestScan());
+      if (!row) return res.json(null);
+      res.json({
+        ...suggestedEditsScanner.toProgress(row),
+        results: (row.results as any[]) || [],
+      });
+    } catch (error: any) {
+      console.error("Failed to load current scan:", error);
+      res.status(500).json({ message: "Failed to load scan status" });
+    }
+  });
+
+  app.get("/api/suggested-edits/scan/:id", async (req, res) => {
+    try {
+      const row = await suggestedEditsScanner.getScan(req.params.id);
+      if (!row) return res.status(404).json({ message: "Scan not found" });
+      res.json({
+        ...suggestedEditsScanner.toProgress(row),
+        results: (row.results as any[]) || [],
+      });
+    } catch (error) {
+      console.error("Failed to load scan:", error);
+      res.status(500).json({ message: "Failed to load scan" });
+    }
+  });
+
+  // SSE progress for a single scan. Dropping this connection does not affect the
+  // scan — it only stops the live updates; the client can reconnect or poll.
+  app.get("/api/suggested-edits/scan/:id/stream", async (req, res) => {
+    const scanId = req.params.id;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // Railway/Nginx: don't buffer SSE
     res.flushHeaders();
 
-    const sendEvent = (event: string, data: any) => {
-      res.write(`event: ${event}\n`);
+    const send = (data: any) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Heartbeat every 15s — keeps Railway proxy from closing the SSE connection mid-scan
-    const heartbeat = setInterval(() => {
-      res.write(': heartbeat\n\n');
-    }, 15000);
+    const onProgress = (progress: any) => {
+      send(progress);
+      if (suggestedEditsScanner.isTerminalStatus(progress.status)) {
+        cleanup();
+        res.end();
+      }
+    };
 
-    const cleanup = () => clearInterval(heartbeat);
-    req.on('close', cleanup);
+    const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15000);
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      suggestedEditsScanner.scanProgressEmitter.off(`scan:${scanId}`, onProgress);
+    };
 
+    req.on("close", cleanup);
+    suggestedEditsScanner.scanProgressEmitter.on(`scan:${scanId}`, onProgress);
+
+    // Send current state immediately so a late subscriber isn't blank until the
+    // next batch, and so an already-finished scan closes the stream right away.
     try {
-      const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      if (!googleOAuthAuth.isAuthenticated()) {
-        sendEvent('error', { message: "Not authenticated" });
-        cleanup(); res.end();
-        return;
+      const row = await suggestedEditsScanner.getScan(scanId);
+      if (!row) {
+        send({ error: "Scan not found" });
+        cleanup();
+        return res.end();
       }
-
-      // Parse optional folder and location filters from query params
-      const folderIdsParam = req.query.folderIds as string | undefined;
-      const locationIdsParam = req.query.locationIds as string | undefined;
-      
-      const folderIds = folderIdsParam ? folderIdsParam.split(',').filter(id => id.trim()) : [];
-      const locationIds = locationIdsParam ? locationIdsParam.split(',').filter(id => id.trim()) : [];
-
-      let allLocations: typeof clientLocations.$inferSelect[] = [];
-
-      // If specific folders are selected, get locations from those folders
-      if (folderIds.length > 0) {
-        const folderLocationIds = new Set<string>();
-        for (const folderId of folderIds) {
-          const folderLocs = await storage.getLocationsByFolderId(folderId);
-          folderLocs.forEach(loc => folderLocationIds.add(loc.id));
-        }
-        if (folderLocationIds.size > 0) {
-          allLocations = await db.select().from(clientLocations)
-            .where(inArray(clientLocations.id, Array.from(folderLocationIds)));
-        }
+      const progress = suggestedEditsScanner.toProgress(row);
+      send(progress);
+      if (suggestedEditsScanner.isTerminalStatus(progress.status)) {
+        cleanup();
+        res.end();
       }
-      
-      // If specific location IDs are selected, add those too (or use exclusively if no folders)
-      if (locationIds.length > 0) {
-        const specificLocations = await db.select().from(clientLocations)
-          .where(inArray(clientLocations.id, locationIds));
-        
-        // Merge with folder locations (avoid duplicates)
-        const existingIds = new Set(allLocations.map(l => l.id));
-        for (const loc of specificLocations) {
-          if (!existingIds.has(loc.id)) {
-            allLocations.push(loc);
-          }
-        }
-      }
-      
-      // If no filters provided, scan all locations
-      if (folderIds.length === 0 && locationIds.length === 0) {
-        allLocations = await db.select().from(clientLocations);
-      }
-
-      // Filter out hidden locations - they should not appear in suggested edits
-      const beforeHiddenFilter = allLocations.length;
-      allLocations = allLocations.filter(loc => !loc.hidden);
-      const totalLocations = allLocations.length;
-
-      console.log(`🔍 Suggested edits scan: ${beforeHiddenFilter} total locations, ${beforeHiddenFilter - totalLocations} hidden, ${totalLocations} to scan`);
-
-      if (totalLocations === 0) {
-        console.warn(`⚠️ Scan has 0 locations to check — completing immediately. All ${beforeHiddenFilter} locations may be marked hidden.`);
-      }
-
-      sendEvent('start', { total: totalLocations });
-
-      const results: any[] = [];
-      let scanned = 0;
-      let withUpdates = 0;
-      let errored = 0;
-      let firstError: string | null = null;
-
-      // Process locations in small parallel batches. BATCH_SIZE was 10 with only a
-      // 200ms gap between batches (~50 req/sec bursts), which blows through the GBP
-      // Business Information API's per-minute quota well before 150+ locations are
-      // scanned — every location after that fails with "Quota exceeded". Lowering
-      // concurrency + adding real spacing, plus retrying quota errors with backoff
-      // (see withQuotaRetry above) instead of counting them as permanent failures,
-      // keeps the scan under the quota ceiling.
-      const BATCH_SIZE = 3;
-      const BATCH_DELAY_MS = 2000;
-
-      for (let i = 0; i < allLocations.length; i += BATCH_SIZE) {
-        const batch = allLocations.slice(i, i + BATCH_SIZE);
-
-        // Process batch in parallel
-        const batchPromises = batch.map(async (location) => {
-          try {
-            let locationName = location.gbpLocationId;
-            if (!locationName.startsWith('locations/')) {
-              locationName = `locations/${locationName}`;
-            }
-
-            const checkResult = await withQuotaRetry(() => googleOAuthAuth.checkForGoogleUpdates(locationName));
-
-            if (checkResult.hasUpdates) {
-              try {
-                const suggestedUpdate = await withQuotaRetry(() => googleOAuthAuth.getGoogleUpdatedLocation(locationName));
-                const originalLoc = checkResult.location || {};
-                const suggestedLoc = suggestedUpdate?.location || {};
-                let diffMask = suggestedUpdate?.diffMask || "";
-
-                console.log(`📋 Raw diffMask for ${locationName}: "${diffMask}"`);
-
-                // Strip non-actionable technical fields that are never meaningful suggestions
-                // (latlng = GPS coordinate precision diffs, plusCode = auto-derived)
-                const NON_ACTIONABLE_FIELDS = new Set(['latlng', 'plusCode', 'plus_code']);
-                diffMask = diffMask
-                  .split(",")
-                  .map((f: string) => f.trim())
-                  .filter((f: string) => f && !NON_ACTIONABLE_FIELDS.has(f))
-                  .join(",");
-
-                // If diffMask is empty or only "metadata", compute it by comparing fields
-                const nonMetaFields = diffMask.split(",").map((f: string) => f.trim()).filter((f: string) => f && f !== 'metadata');
-                if (nonMetaFields.length === 0 && Object.keys(suggestedLoc).length > 0) {
-                  const comparableFields = ['title', 'storefrontAddress', 'phoneNumbers', 'websiteUri', 'regularHours', 'profile', 'categories', 'openInfo'];
-                  // Strip technical sub-fields from address objects before comparing
-                  // to avoid false positives when only GPS coordinates or plus codes differ
-                  const stripNonActionable = (obj: any) => {
-                    if (!obj || typeof obj !== 'object') return obj;
-                    const copy = { ...obj };
-                    delete copy.latlng;
-                    delete copy.plusCode;
-                    delete copy.plus_code;
-                    return copy;
-                  };
-
-                  const computedFields: string[] = [];
-                  for (const field of comparableFields) {
-                    let suggestedVal = (suggestedLoc as any)[field];
-                    // Only flag as changed if Google actually provided a suggested value for the field.
-                    // If the field is absent from the suggested location, Google isn't suggesting a change
-                    // for it — it just wasn't included in the partial response.
-                    if (suggestedVal === undefined || suggestedVal === null) continue;
-                    let origValRaw = (originalLoc as any)[field] ?? null;
-                    // For address fields, strip non-actionable sub-fields before comparing
-                    if (field === 'storefrontAddress') {
-                      origValRaw = stripNonActionable(origValRaw);
-                      suggestedVal = stripNonActionable(suggestedVal);
-                    }
-                    const origVal = JSON.stringify(origValRaw);
-                    const suggestValStr = JSON.stringify(suggestedVal);
-                    if (origVal !== suggestValStr) {
-                      computedFields.push(field);
-                    }
-                  }
-                  if (computedFields.length > 0) {
-                    diffMask = computedFields.join(",");
-                    console.log(`📋 Computed diffMask for ${locationName}: "${diffMask}"`);
-                  } else {
-                    // No actionable field diffs found — skip this location rather than
-                    // showing a meaningless "metadata" entry that can't be acted on
-                    console.log(`📋 No actionable diffs found for ${locationName}, skipping`);
-                    return null;
-                  }
-                }
-
-                // Final check: if the only remaining fields are metadata/non-actionable, skip
-                const finalFields = diffMask.split(",").map((f: string) => f.trim()).filter((f: string) => f && f !== 'metadata');
-                if (finalFields.length === 0) {
-                  console.log(`📋 Only metadata remaining for ${locationName}, skipping`);
-                  return null;
-                }
-
-                return {
-                  locationId: location.id,
-                  locationName: location.name,
-                  locationAddress: location.address,
-                  gbpLocationName: locationName,
-                  hasUpdates: true,
-                  originalLocation: originalLoc,
-                  suggestedLocation: suggestedLoc,
-                  diffMask
-                };
-              } catch (error) {
-                console.error(`Error fetching updates for ${locationName}:`, error);
-                return {
-                  locationId: location.id,
-                  locationName: location.name,
-                  locationAddress: location.address,
-                  gbpLocationName: locationName,
-                  hasUpdates: true,
-                  originalLocation: checkResult.location || {},
-                  suggestedLocation: {},
-                  diffMask: "metadata"
-                };
-              }
-            }
-            return null;
-          } catch (error: any) {
-            const msg = error?.message || String(error);
-            console.error(`❌ Error checking location ${location.gbpLocationId}:`, msg);
-            return { __error: true, message: msg };
-          }
-        });
-
-        const batchResults = await Promise.all(batchPromises);
-
-        // Count ALL locations in this batch
-        scanned += batch.length;
-
-        // Process results
-        for (const result of batchResults) {
-          if (!result) continue;
-          if ((result as any).__error) {
-            errored++;
-            if (!firstError) firstError = (result as any).message;
-          } else {
-            withUpdates++;
-            results.push(result);
-          }
-        }
-
-        // If every location so far has errored, bail early with an error event
-        if (scanned === errored && scanned >= BATCH_SIZE) {
-          console.error(`🚨 Scan aborting early — all ${scanned} locations errored. First error: ${firstError}`);
-          sendEvent('error', {
-            message: `Google API calls are failing for all locations. ${firstError || 'Check authentication and API permissions.'}`,
-            errored,
-            scanned
-          });
-          cleanup(); res.end();
-          return;
-        }
-
-        // Send progress update
-        sendEvent('progress', {
-          scanned,
-          total: totalLocations,
-          withUpdates,
-          errored
-        });
-
-        // Delay between batches to avoid rate limiting
-        if (i + BATCH_SIZE < allLocations.length) {
-          await sleep(BATCH_DELAY_MS);
-        }
-      }
-
-      // Send final results
-      sendEvent('complete', {
-        scanned,
-        withUpdates,
-        errored,
-        firstError,
-        results
-      });
-
-      cleanup(); res.end();
     } catch (error) {
-      console.error("Error scanning for suggested edits:", error);
-      sendEvent('error', { message: "Failed to scan for suggested edits" });
-      cleanup(); res.end();
+      console.error("Failed to send initial scan progress:", error);
     }
+  });
+
+  app.post("/api/suggested-edits/scan/:id/cancel", async (req, res) => {
+    try {
+      const row = await suggestedEditsScanner.cancelScan(req.params.id);
+      if (!row) return res.status(404).json({ message: "Scan not found" });
+      res.json(suggestedEditsScanner.toProgress(row));
+    } catch (error) {
+      console.error("Failed to cancel scan:", error);
+      res.status(500).json({ message: "Failed to cancel scan" });
+    }
+  });
+
+  // DEPRECATED: the original browser-tethered scan (GET + SSE, results returned
+  // only in the final event). Replaced by POST /api/suggested-edits/scan, which
+  // runs server-side and persists the run. Kept as a stub so a stale cached
+  // frontend bundle fails loudly instead of hanging on a stream that never comes.
+  app.get("/api/suggested-edits/scan", (_req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    res.write('event: error\n');
+    res.write(`data: ${JSON.stringify({
+      message: "This version of the app is out of date. Reload the page to pick up the new scan behavior.",
+    })}\n\n`);
+    res.end();
   });
 
   // Get all suggested edits from the database
@@ -4672,6 +4517,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           actedByName: actor?.name ?? null,
           performedAt: new Date()
         });
+
+        // Drop the field from the stored scan results too. The scan row is what
+        // the UI re-reads on reload/refocus, so skipping this would make an
+        // accepted edit reappear the next time the page synced.
+        await suggestedEditsScanner
+          .removeResolvedFieldFromScans(gbpLocationName, diffMask)
+          .catch((e) => console.error("Failed to prune accepted edit from scan results:", e));
 
         if (clientId) {
           await storage.createActivityLog({
@@ -4847,6 +4699,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           actedByName: actor?.name ?? null,
           performedAt: new Date()
         });
+
+        // See the accept handler: keep the persisted scan results in step so a
+        // rejected edit doesn't come back on the next refresh.
+        await suggestedEditsScanner
+          .removeResolvedFieldFromScans(gbpLocationName, diffMask)
+          .catch((e) => console.error("Failed to prune rejected edit from scan results:", e));
 
         if (clientId) {
           await storage.createActivityLog({

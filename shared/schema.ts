@@ -231,6 +231,39 @@ export const suggestedEdits = pgTable("suggested_edits", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// A single "scan all locations for Google-suggested updates" run.
+//
+// Scans take minutes (150+ locations, rate-limited GBP API). They used to live
+// entirely in the browser: an EventSource held open for the whole run, results
+// kept in React state only. Closing the tab or navigating away silently threw
+// the whole run away with no record it had ever happened. Every run now gets a
+// row here BEFORE any Google call, progress is written as it goes, and results
+// are persisted — so the UI can always answer "did my scan actually run?".
+export const suggestedEditScans = pgTable("suggested_edit_scans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  // running | success | partial | failed | cancelled | interrupted
+  status: text("status").notNull().default("running"),
+  // { folderIds: string[], locationIds: string[] } — empty means "scan everything"
+  scope: json("scope"),
+  totalLocations: integer("total_locations").notNull().default(0),
+  scannedCount: integer("scanned_count").notNull().default(0),
+  withUpdatesCount: integer("with_updates_count").notNull().default(0),
+  erroredCount: integer("errored_count").notNull().default(0),
+  firstError: text("first_error"),
+  // Array of ScanResult objects — the actual suggested edits found.
+  results: json("results"),
+  startedByLocalUserId: varchar("started_by_local_user_id").references(() => localUsers.id),
+  startedByName: text("started_by_name"),
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  // Bumped after every batch. A "running" row with a stale heartbeat means the
+  // process died mid-scan (Railway deploy, crash) — see markInterruptedScans().
+  heartbeatAt: timestamp("heartbeat_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type SuggestedEditScan = typeof suggestedEditScans.$inferSelect;
+
 export const suggestedEditActions = pgTable("suggested_edit_actions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   clientLocationId: varchar("client_location_id").references(() => clientLocations.id),

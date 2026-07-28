@@ -43,6 +43,13 @@
       "when": 1784160000000,
       "tag": "0007_review_email_created_by",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785270000000,
+      "tag": "0008_suggested_edit_scans",
+      "breakpoints": true
     }
   ]
 }

@@ -12,8 +12,10 @@ import {
   Star,
   History,
   Settings,
+  Loader2,
 } from "lucide-react";
 import logoPath from "@/assets/bizbuddy-logo.png";
+import { useScanProgress } from "@/contexts/scan-progress-context";
 
 type NavItem = {
   href: string;
@@ -76,11 +78,16 @@ export function SideNav() {
   }, []);
 
   const { data: allLocations = [] } = useQuery<any[]>({ queryKey: ["/api/locations/all"] });
-  const { data: allEdits = [] } = useQuery<any[]>({ queryKey: ["/api/suggested-edits"] });
+
+  // Suggested-edit counts come from the last persisted scan run, not the
+  // legacy suggested_edits table (which is never written to, so this badge was
+  // permanently 0). While a scan is running the badge becomes a spinner, so a
+  // scan is visible from anywhere in the app.
+  const { results: scanResults, isScanning } = useScanProgress();
 
   const counts: Record<string, number> = {
     locations: allLocations.length,
-    edits: allEdits.filter((e) => e?.status === "pending").length,
+    edits: scanResults.length,
   };
 
   const lcQuery = query.trim().toLowerCase();
@@ -130,7 +137,8 @@ export function SideNav() {
                     location === item.href ||
                     (item.href === "/dashboard" && (location === "/" || location === "/analytics"));
                   const count = item.countKey ? counts[item.countKey] : undefined;
-                  const showBadge = typeof count === "number" && count > 0;
+                  const showSpinner = item.countKey === "edits" && isScanning;
+                  const showBadge = !showSpinner && typeof count === "number" && count > 0;
                   const badgeClass =
                     item.badgeTone === "amber"
                       ? "bg-amber-100 text-amber-700"
@@ -148,6 +156,12 @@ export function SideNav() {
                           className={`w-[18px] h-[18px] ${isActive ? "text-white" : "text-gray-500"}`}
                         />
                         <span className="text-[14px] font-medium flex-1 truncate">{item.label}</span>
+                        {showSpinner && (
+                          <Loader2
+                            className={`w-3.5 h-3.5 animate-spin ${isActive ? "text-white" : "text-orange-500"}`}
+                            data-testid="nav-spinner-suggested-edits"
+                          />
+                        )}
                         {showBadge && (
                           <span
                             className={`text-[11px] font-semibold rounded-full px-1.5 py-0.5 leading-none ${
