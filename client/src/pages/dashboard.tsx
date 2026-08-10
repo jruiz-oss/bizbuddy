@@ -26,57 +26,26 @@ import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
 import type { Client, ClientLocation, Job } from "@shared/schema";
+import { computeReviewPeriod, formatReviewPeriodRange, computeNextReviewEmailSendMs } from "@shared/review-period";
 
 interface DashboardProps {
   selectedClientId: string;
   setSelectedClientId: (id: string) => void;
 }
 
+/**
+ * Next scheduled send for a review email group.
+ *
+ * This used to be a separate implementation from the scheduler's, and it had no
+ * `monthly` branch at all — it always advanced to the next `emailDay` weekday, so a
+ * monthly group was previewed on the wrong date entirely. It also anchored biweekly on
+ * `lastEmailSentAt` while the server anchors strictly on `startDate`. Both now come from
+ * shared/review-period.ts, so the preview and the scheduler cannot disagree.
+ */
 function computeNextEmailSend(group: any): Date | null {
   if (!group.isEnabled) return null;
-  const PHOENIX_OFFSET = 7 * 60 * 60 * 1000;
-  const now = new Date();
-  const phoenixNow = new Date(now.getTime() - PHOENIX_OFFSET);
-  const targetDay = parseInt(group.emailDay, 10);
-  const [hour, minute] = (group.emailTime || "09:00").split(":").map(Number);
-  const currentDay = phoenixNow.getUTCDay();
-  let daysUntil = (targetDay - currentDay + 7) % 7;
-  if (daysUntil === 0) {
-    const nowMins = phoenixNow.getUTCHours() * 60 + phoenixNow.getUTCMinutes();
-    if (nowMins >= hour * 60 + minute) daysUntil = 7;
-  }
-  const candidate = new Date(phoenixNow);
-  candidate.setUTCDate(candidate.getUTCDate() + daysUntil);
-  candidate.setUTCHours(hour, minute, 0, 0);
-  const candidateUTC = new Date(candidate.getTime() + PHOENIX_OFFSET);
-  if (group.frequency === "biweekly") {
-    const anchor = group.lastEmailSentAt
-      ? new Date(group.lastEmailSentAt)
-      : group.startDate
-        ? new Date(group.startDate + "T00:00:00Z")
-        : null;
-    if (anchor) {
-      // Check whether the CANDIDATE date itself is an off-week from the anchor.
-      // Using the candidate (not "now") avoids double-advancing when checked on
-      // an off-week day after the scheduled time has already passed.
-      const daysCandidateFromAnchor = (candidateUTC.getTime() - anchor.getTime()) / 86400000;
-      const weekIndex = Math.round(daysCandidateFromAnchor / 7);
-      if (weekIndex % 2 === 1) {
-        // Candidate is on an off-week — push forward to the next on-week
-        candidateUTC.setDate(candidateUTC.getDate() + 7);
-      }
-    }
-  }
-  if (group.startDate) {
-    const start = new Date(group.startDate + "T12:00:00");
-    if (candidateUTC < start) {
-      let d = new Date(start);
-      while (d.getDay() !== targetDay) d = new Date(d.getTime() + 86400000);
-      d.setHours(hour, minute, 0, 0);
-      return d;
-    }
-  }
-  return candidateUTC;
+  const nextMs = computeNextReviewEmailSendMs(group);
+  return nextMs === null ? null : new Date(nextMs);
 }
 
 // Deterministic pseudo-random series for sparklines / chart placeholders
@@ -1784,11 +1753,15 @@ export default function Dashboard({
           {selectedUpcoming?.type === "email" && (() => {
             const grp = selectedUpcoming.data.group;
             const nextDate: Date | null = selectedUpcoming.data.next;
-            const lookback: number = grp.lookbackDays ?? 7;
-            // End = day before send date (send date itself is excluded from the review window)
-            const coverEnd = nextDate ? new Date(nextDate.getTime() - 24 * 60 * 60 * 1000) : null;
-            const coverStart = coverEnd ? new Date(coverEnd.getTime() - (lookback - 1) * 24 * 60 * 60 * 1000) : null;
-            const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+            // Use the same window math and formatter as the scheduler (shared/review-period),
+            // anchored on the upcoming send instant exactly as the server anchors on the
+            // occurrence's due time. This preview used to re-derive the range by hand,
+            // ignoring lookbackOffset and formatting in browser-local time.
+            const coveredPeriod = nextDate ? computeReviewPeriod(grp, nextDate.getTime()) : null;
+            const coveredRange = coveredPeriod ? formatReviewPeriodRange(coveredPeriod) : null;
+            const coveredNote = coveredPeriod?.mode === "last_calendar_month"
+              ? "calendar month"
+              : `${grp.lookbackDays ?? 7} day lookback`;
             return (
               <>
                 <DialogHeader>
@@ -1820,12 +1793,12 @@ export default function Dashboard({
                       <span className="text-sm text-muted-foreground ml-1">{grp.minStars ?? 1}–{grp.maxStars ?? 5} stars</span>
                     </div>
                   </div>
-                  {coverStart && coverEnd && (
+                  {coveredRange && (
                     <div>
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Reviews Covered</p>
                       <p className="text-sm text-muted-foreground">
-                        {fmt(coverStart)} – {fmt(coverEnd)}
-                        <span className="text-xs ml-1.5 text-muted-foreground/70">({lookback} day lookback)</span>
+                        {coveredRange}
+                        <span className="text-xs ml-1.5 text-muted-foreground/70">({coveredNote})</span>
                       </p>
                     </div>
                   )}

@@ -3,6 +3,7 @@ import { db } from "./db";
 import { jobs, clients, clientLocations, reviewEmailGroups, reviewEmailGroupLocations, users, locationPerformanceData, activityLog, googleConnection } from "@shared/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, lt, max, or, sql } from "drizzle-orm";
 import type { InsertLocationPerformanceData } from "@shared/schema";
+import { computeReviewPeriod, formatReviewPeriodRange, describeReviewPeriod, computeReviewEmailDueAtMs } from "@shared/review-period";
 import { storage } from "./storage";
 import { processJob } from "./job-processor";
 import { sendEmail, type InlineImage, type EmailAttachment, type UserTokens } from "./gmail-service";
@@ -236,73 +237,9 @@ export function initializeScheduler() {
 }
 
 // ---- Date-anchored scheduling helpers (Phoenix time, UTC-7 fixed, no DST) ----
-const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000;
-
-/** Convert a Phoenix wall-clock (Y, monthIdx, day, hh, mm) to a UTC epoch ms. */
-function phoenixWallToUtcMs(y: number, monthIdx: number, day: number, hh: number, mm: number): number {
-  return Date.UTC(y, monthIdx, day, hh, mm, 0, 0) + PHOENIX_OFFSET_MS;
-}
-
-/** Most recent Phoenix weekday (0=Sun..6=Sat) at hh:mm that is <= nowMs. Only used as a
- *  fallback anchor for legacy groups created before startDate existed. */
-function mostRecentWeekdayMs(nowMs: number, weekday: number, hh: number, mm: number): number {
-  const p = new Date(nowMs - PHOENIX_OFFSET_MS);
-  for (let back = 0; back < 8; back++) {
-    const candUtc = phoenixWallToUtcMs(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate() - back, hh, mm);
-    const dow = new Date(candUtc - PHOENIX_OFFSET_MS).getUTCDay();
-    if (dow === weekday && candUtc <= nowMs) return candUtc;
-  }
-  return phoenixWallToUtcMs(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate(), hh, mm);
-}
-
-/** The k-th monthly occurrence after the start month, clamped to the month's length
- *  (e.g. a Jan 31 anchor lands on Feb 28). */
-function monthlyOccurrenceMs(startY: number, startMonthIdx: number, startDay: number, k: number, hh: number, mm: number): number {
-  const total = startMonthIdx + k;
-  const y = startY + Math.floor(total / 12);
-  const m = ((total % 12) + 12) % 12;
-  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  return phoenixWallToUtcMs(y, m, Math.min(startDay, daysInMonth), hh, mm);
-}
-
-/**
- * Most recent scheduled send instant (UTC ms) at or before nowMs, anchored on the group's
- * startDate + emailTime and repeating by frequency (weekly/biweekly/monthly). Returns null
- * if the first send hasn't been reached yet — which also enforces "never send before startDate".
- */
-function computeDueAtMs(group: typeof reviewEmailGroups.$inferSelect, nowMs: number): number | null {
-  const [hhS, mmS] = (group.emailTime || "09:00").split(":");
-  const hh = parseInt(hhS) || 0;
-  const mm = parseInt(mmS) || 0;
-  const frequency = group.frequency || "weekly";
-
-  let firstSendMs: number, sy: number, smIdx: number, sd: number;
-  if (group.startDate) {
-    const [y, mo, d] = group.startDate.split("-").map(Number);
-    sy = y; smIdx = mo - 1; sd = d;
-    firstSendMs = phoenixWallToUtcMs(sy, smIdx, sd, hh, mm);
-  } else {
-    // Legacy group with no startDate: anchor to the configured weekday.
-    firstSendMs = mostRecentWeekdayMs(nowMs, parseInt(group.emailDay) || 1, hh, mm);
-    const p = new Date(firstSendMs - PHOENIX_OFFSET_MS);
-    sy = p.getUTCFullYear(); smIdx = p.getUTCMonth(); sd = p.getUTCDate();
-  }
-
-  if (nowMs < firstSendMs) return null;
-
-  if (frequency === "monthly") {
-    let dueMs = firstSendMs, k = 0;
-    for (;;) {
-      const occ = monthlyOccurrenceMs(sy, smIdx, sd, k + 1, hh, mm);
-      if (occ <= nowMs) { dueMs = occ; k++; } else break;
-    }
-    return dueMs;
-  }
-
-  const periodMs = (frequency === "biweekly" ? 14 : 7) * 86400000;
-  const n = Math.floor((nowMs - firstSendMs) / periodMs);
-  return firstSendMs + n * periodMs;
-}
+// The occurrence math lives in shared/review-period.ts so the dashboard's "next send"
+// preview derives from the same rules instead of its own re-implementation.
+const computeDueAtMs = computeReviewEmailDueAtMs;
 
 // Groups with a send currently running in THIS process. Prevents a slow send
 // (large groups take minutes) from overlapping with its own retry tick.
@@ -445,7 +382,7 @@ async function checkScheduledReviewEmails() {
       // Fire and forget — do NOT await. Sending can take several minutes for large groups
       // (sequential Google API calls per location). The claim above plus the in-flight set
       // guarantee only one attempt runs at a time.
-      sendScheduledReviewEmailForGroup(group)
+      sendScheduledReviewEmailForGroup(group, false, dueAtMs)
         .then(async (result) => {
           if (result.outcome === "sent" || result.outcome === "skip") {
             // Confirmed send (or deliberate skip) — NOW the occurrence is consumed.
@@ -768,7 +705,14 @@ export async function syncLocationsFromGoogle() {
  */
 export type ReviewEmailSendResult = { outcome: "sent" | "skip" | "retry"; detail?: string };
 
-export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmailGroups.$inferSelect, isTest = false): Promise<ReviewEmailSendResult> {
+export async function sendScheduledReviewEmailForGroup(
+  group: typeof reviewEmailGroups.$inferSelect,
+  isTest = false,
+  /** The scheduled occurrence this send is fulfilling (UTC ms). The review window is
+   *  anchored to this, not to wall-clock now, so retries and catch-up sends cover the
+   *  same period the occurrence was supposed to. Omit for manual/test sends. */
+  occurrenceMs?: number,
+): Promise<ReviewEmailSendResult> {
   // History entry ids created for this attempt (one per client), so the final
   // outcome can be written onto the same rows. Declared outside the try so the
   // outer catch can still flip them to "failed".
@@ -794,6 +738,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     minStars: group.minStars,
     maxStars: group.maxStars,
     lookbackDays: group.lookbackDays,
+    periodMode: group.periodMode ?? "rolling",
     trigger: "scheduled",
     status,
     error: errorMessage,
@@ -926,26 +871,26 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     let fetchErrorCount = 0;
     let firstFetchError: string | null = null;
     
-    // Get reviews from the lookback period (excluding today in Phoenix time)
-    const lookbackDays = group.lookbackDays || 7;
-    const lookbackOffset = (group as any).lookbackOffset || 0; // days to shift window back; 0 = current period
-    // Calculate midnight in Phoenix timezone (UTC-7, no DST) so the boundary
-    // is consistent regardless of whether the server runs in UTC or another zone
-    const PHOENIX_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC-7 in ms
-    const nowPhoenixMs = Date.now() - PHOENIX_OFFSET_MS;
-    const midnightPhoenixMs = Math.floor(nowPhoenixMs / 86400000) * 86400000;
-    const today = new Date(midnightPhoenixMs + PHOENIX_OFFSET_MS); // midnight Phoenix expressed as UTC
-    // Rolling window: periodEnd is always "today" (excludes today's reviews, per the
-    // comment above), periodStart is lookbackDays before that. lookbackOffset shifts
-    // the whole window back further (e.g. to preview "last period" rather than current).
-    // NOTE: this used to snap periodEnd to the most recent complete Mon–Sun calendar week,
-    // which could push the effective cutoff several days earlier than "today" and made
-    // recent reviews look like they were missing/"too old" right after they were fetched.
+    // Resolve the review window. All boundaries are Phoenix midnight (UTC-7, no DST) so
+    // they're consistent regardless of the server's own zone. Two shapes, see
+    // shared/review-period.ts:
+    //   - "rolling": periodEnd is midnight today (today's reviews excluded), periodStart is
+    //     lookbackDays before that, both shifted back by lookbackOffset.
+    //     NOTE: this used to snap periodEnd to the most recent complete Mon–Sun calendar week,
+    //     which could push the effective cutoff several days earlier than "today" and made
+    //     recent reviews look like they were missing/"too old" right after they were fetched.
+    //   - "last_calendar_month": the entire previous calendar month, ignoring lookbackDays.
+    // Anchored on the occurrence's due time rather than Date.now() — a retry or startup
+    // catch-up runs after the occurrence, and for a calendar month that crosses a month
+    // boundary the difference is a whole wrong month. Falls back to now for manual tests.
     // periodEnd is exclusive (reviews < periodEnd), periodStart is inclusive (reviews >= periodStart)
-    const offsetMs = lookbackOffset * 86400000;
-    const periodEnd = new Date(midnightPhoenixMs - offsetMs + PHOENIX_OFFSET_MS);
-    const periodStart = new Date(midnightPhoenixMs - offsetMs - lookbackDays * 86400000 + PHOENIX_OFFSET_MS);
-    
+    const lookbackDays = group.lookbackDays || 7;
+    const lookbackOffset = group.lookbackOffset || 0;
+    const period = computeReviewPeriod(group, occurrenceMs ?? Date.now());
+    const periodEnd = period.end;
+    const periodStart = period.start;
+    console.log(`🗓️ Review window for "${group.name}" (${period.mode}): ${periodStart.toISOString()} → ${periodEnd.toISOString()} (exclusive)`);
+
     for (const location of locations) {
       let matchingReviewCount = 0;
       // Diagnostic counters — log per-location star breakdown so we can verify
@@ -955,7 +900,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
       let oldestReviewDate: Date | null = null;
       let newestReviewDate: Date | null = null;
       let totalFetched = 0;
-      let droppedAsToday = 0;
+      let droppedAsTooNew = 0; // at or after periodEnd (e.g. today, or this month)
       let droppedAsTooOld = 0;
       try {
         const startDateStr = periodStart.toISOString().split('T')[0];
@@ -980,10 +925,13 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
             if (!newestReviewDate || reviewDate > newestReviewDate) newestReviewDate = reviewDate;
           }
 
-          // Date window check (excluding today in Phoenix time)
+          // Date window check. periodStart is inclusive, periodEnd is exclusive.
           const inWindow = reviewDate ? (reviewDate >= periodStart && reviewDate < periodEnd) : false;
           if (reviewDate && !inWindow) {
-            if (reviewDate >= today) droppedAsToday++;
+            // Split the diagnostic counters on periodEnd, not on `today` — for a calendar
+            // month those differ (periodEnd is the 1st, today may be well past it), and
+            // bucketing on `today` logged this month's reviews as "too old".
+            if (reviewDate >= periodEnd) droppedAsTooNew++;
             else droppedAsTooOld++;
           }
           if (inWindow) inWindowStarCounts[starRating] = (inWindowStarCounts[starRating] || 0) + 1;
@@ -1009,7 +957,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
           `📊 [Review diag] "${location.name}" — fetched ${totalFetched} | ` +
           `stars(all): 1★${starCounts[1]||0} 2★${starCounts[2]||0} 3★${starCounts[3]||0} 4★${starCounts[4]||0} 5★${starCounts[5]||0} unrated:${starCounts[0]||0} | ` +
           `in-window: 1★${inWindowStarCounts[1]||0} 2★${inWindowStarCounts[2]||0} 3★${inWindowStarCounts[3]||0} 4★${inWindowStarCounts[4]||0} 5★${inWindowStarCounts[5]||0} | ` +
-          `dropped: today=${droppedAsToday} tooOld=${droppedAsTooOld} | ` +
+          `dropped: tooNew=${droppedAsTooNew} tooOld=${droppedAsTooOld} | ` +
           `dates: oldest=${fmt(oldestReviewDate)} newest=${fmt(newestReviewDate)} | ` +
           `window: ${periodStart.toISOString()} → ${periodEnd.toISOString()} | ` +
           `matched ${minStars}-${maxStars}★: ${matchingReviewCount}`
@@ -1029,7 +977,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
     console.log(
       `📊 [Review diag] Group "${group.name}" summary: ${locations.length} location(s) checked | ` +
-      `lookback: ${lookbackDays} days (offset: ${lookbackOffset}) | star filter: ${minStars}-${maxStars} | ` +
+      `period: ${period.mode === "last_calendar_month" ? `last calendar month (${formatReviewPeriodRange(period)})` : `lookback ${lookbackDays} days (offset: ${lookbackOffset})`} | star filter: ${minStars}-${maxStars} | ` +
       `total matching reviews: ${allReviews.length}${fetchErrorCount > 0 ? ` | fetch errors: ${fetchErrorCount}/${locations.length}` : ""}`
     );
 
@@ -1086,12 +1034,10 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     }
 
     // Generate email HTML with all checked locations (even if no reviews)
-    // Display dates match the rolling window used for fetching:
-    // _endDate = last day included (periodEnd is exclusive, so subtract 1 day)
-    // _startDate = first day included (periodStart)
-    const _endDate = new Date(periodEnd.getTime() - 86400000);
-    const _startDate = periodStart;
-    const schedulerDateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
+    // Display dates are derived from the same window used for fetching, via the shared
+    // formatter — periodEnd is exclusive, so the last day shown is periodEnd - 1 day.
+    // For a calendar month this renders e.g. "Jul 1 – Jul 31, 2026".
+    const schedulerDateRange = formatReviewPeriodRange(period);
     const emailHtml = generateReviewEmailHtmlTemplate(allReviews, group.name, minStars, maxStars, schedulerDateRange, allCheckedLocations, group.customMessage || undefined, appBaseUrl);
 
     let subjectText: string;
@@ -1169,8 +1115,9 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     if (outputFormat === 'sheet' && allReviews.length > 0) {
       console.log(`📊 Generating spreadsheet attachment for group "${group.name}"...`);
       const breakout = ((group as any).sheetBreakout || 'region') as 'region' | 'location' | 'none';
-      // Use the same Mon–Sun window as the fetch: _startDate (Monday) through _endDate (Sunday)
-      const dateRange = `${_startDate.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" })} – ${_endDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix" })}`;
+      // Same window as the fetch, same formatter as the HTML email — so the sheet's
+      // header and filename can't drift from the range that was actually queried.
+      const dateRange = schedulerDateRange;
       const reviewsForSheet = allReviews.map((r: any) => ({
         locationName: r.locationName || 'Unknown',
         locationAddress: r.locationAddress,
@@ -1200,7 +1147,7 @@ export async function sendScheduledReviewEmailForGroup(group: typeof reviewEmail
     const emailBody = outputFormat === 'sheet' && xlsxAttachments
       ? (group.customMessage
           ? `${group.customMessage}`
-          : `Please find attached your review recap for the past ${lookbackDays} days${lookbackOffset > 0 ? ` (${lookbackOffset}–${lookbackOffset + lookbackDays} days ago)` : ''}.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
+          : `Please find attached your review recap ${describeReviewPeriod(group, period)}.\n\n${allReviews.length} review${allReviews.length !== 1 ? 's' : ''} with ${starText} across ${allCheckedLocations.length} location${allCheckedLocations.length !== 1 ? 's' : ''}.`)
       : emailHtml;
     const emailIsHtml = outputFormat !== 'sheet' || !xlsxAttachments;
 

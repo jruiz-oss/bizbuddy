@@ -319,6 +319,10 @@ export const reviewEmailGroups = pgTable("review_email_groups", {
   minStars: integer("min_stars").notNull().default(1),
   maxStars: integer("max_stars").notNull().default(3),
   frequency: text("frequency").notNull().default("weekly"), // "weekly" | "biweekly" | "monthly"
+  // How the review window is derived. "rolling" uses lookbackDays/lookbackOffset (N days back
+  // from today, excluding today). "last_calendar_month" ignores both and uses the entire
+  // previous calendar month in Phoenix time — all of last month, nothing from this month.
+  periodMode: text("period_mode").notNull().default("rolling"), // "rolling" | "last_calendar_month"
   lookbackDays: integer("lookback_days").notNull().default(7),
   lookbackOffset: integer("lookback_offset").notNull().default(0), // days to shift window back; 0 = current period, N = prior period (start and end both shift back by N days)
   customMessage: text("custom_message"),

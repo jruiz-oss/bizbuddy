@@ -50,6 +50,13 @@
       "when": 1785270000000,
       "tag": "0008_suggested_edit_scans",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786320000000,
+      "tag": "0009_review_email_period_mode",
+      "breakpoints": true
     }
   ]
 }
