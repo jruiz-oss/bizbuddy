@@ -7,6 +7,7 @@ import crypto from "crypto";
 import verificationRoutes from "./verification-routes";
 import { storage } from "./storage";
 import { sendScheduledReviewEmailForGroup, syncPerfData } from "./scheduler";
+import { resolvePeriodMode } from "@shared/review-period";
 import { insertClientSettingsSchema, insertJobSchema, insertAppleLocationSchema, posts, clients, jobItems, clientLocations, jobs, suggestedEdits, suggestedEditActions, activityLog, locationFolders, users, googleConnection, locationPerformanceData, type InsertClientLocation } from "@shared/schema";
 import { processJob, progressEmitter } from "./job-processor";
 import * as suggestedEditsScanner from "./suggested-edits-scanner";
@@ -5153,7 +5154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/review-email-groups", requireAuth, async (req, res) => {
     try {
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, periodMode, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
 
       if (!name || !recipientEmail) {
         return res.status(400).json({ message: "Name and recipient email are required" });
@@ -5174,7 +5175,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customMessage: customMessage || null,
         customSubject: customSubject || null,
         isEnabled: isEnabled !== false,
-        frequency: frequency || "weekly",
+        // A calendar-month period is only coherent with a monthly cadence — any other
+        // frequency re-sends the same month's recap. The UI disables those options; this
+        // enforces it for any other caller.
+        frequency: resolvePeriodMode(periodMode) === "last_calendar_month" ? "monthly" : (frequency || "weekly"),
+        // Unknown values fall back to the legacy rolling window rather than being stored
+        // as-is — the column has no CHECK constraint, so this is the only gate.
+        periodMode: resolvePeriodMode(periodMode),
         lookbackDays: lookbackDays || 7,
         lookbackOffset: lookbackOffset || 0,
         startDate: startDate || null,
@@ -5206,7 +5213,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Group not found" });
       }
       
-      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
+      const { name, recipientEmail, ccEmail, emailDay, emailTime, minStars, maxStars, isEnabled, locationIds, customMessage, customSubject, frequency, periodMode, lookbackDays, lookbackOffset, startDate, outputFormat, sheetBreakout, sheetName, themes } = req.body;
+
+      // A caller that omits periodMode (or sends null) must not silently reset an existing
+      // calendar-month group back to rolling, so fall back to what's already stored.
+      const resolvedPeriodMode = periodMode == null
+        ? resolvePeriodMode(existing.periodMode)
+        : resolvePeriodMode(periodMode);
 
       const group = await storage.updateReviewEmailGroup(id, {
         name,
@@ -5223,7 +5236,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // `false` turns a group off. A missing/undefined value in the payload
         // (e.g. a client that doesn't round-trip every field) keeps it enabled.
         isEnabled: isEnabled === false ? false : true,
-        frequency: frequency || "weekly",
+        periodMode: resolvedPeriodMode,
+        // A calendar-month period is only coherent with a monthly cadence. Otherwise fall
+        // back to the stored frequency rather than "weekly", so a caller that omits the
+        // field can't flip an existing monthly group to weekly.
+        frequency: resolvedPeriodMode === "last_calendar_month"
+          ? "monthly"
+          : (frequency ?? existing.frequency ?? "weekly"),
         lookbackDays: lookbackDays || 7,
         lookbackOffset: lookbackOffset ?? 0,
         startDate: startDate || null,

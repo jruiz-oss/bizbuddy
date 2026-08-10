@@ -1,0 +1,17 @@
+-- Add a calendar-month option to review email review periods.
+--
+-- Until now the review window was always rolling: lookback_days back from
+-- midnight today (Phoenix), optionally shifted by lookback_offset. Picking
+-- "Once a month" as the frequency only set lookback_days = 30, so a monthly
+-- email covered the trailing 30 days — it included the first days of the
+-- current month and dropped the beginning of the previous one. Clients asking
+-- for "last month" want the calendar month: everything from the 1st through
+-- the last day of the previous month, and nothing from this month.
+--
+-- period_mode selects which interpretation to use. "rolling" is the existing
+-- behavior and stays the default, so every existing group keeps sending exactly
+-- the same window as before. "last_calendar_month" ignores lookback_days and
+-- lookback_offset entirely (see the window math in server/scheduler.ts).
+--
+-- Additive only: one nullable-free column with a default, no data rewritten.
+ALTER TABLE "review_email_groups" ADD COLUMN IF NOT EXISTS "period_mode" text NOT NULL DEFAULT 'rolling';

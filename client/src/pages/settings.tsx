@@ -16,6 +16,7 @@ import { useApiError } from "@/contexts/api-error-context";
 import { useLocation, Link as WouterLink } from "wouter";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import type { Client, ClientSettings, ReviewEmailGroup, ClientLocation } from "@shared/schema";
+import { isCalendarPeriodMode, shortPeriodLabel } from "@shared/review-period";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface ReviewEmailGroupWithLocations extends ReviewEmailGroup {
@@ -226,6 +227,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     frequency: "weekly" as "weekly" | "biweekly" | "monthly",
     minStars: 1,
     maxStars: 3,
+    periodMode: "rolling" as "rolling" | "last_calendar_month",
     lookbackDays: 7,
     lookbackOffset: 0,
     customMessage: "",
@@ -262,6 +264,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
         frequency: "weekly",
         minStars: 1,
         maxStars: 3,
+        periodMode: "rolling",
         lookbackDays: 7,
         lookbackOffset: 0,
         customMessage: "",
@@ -399,6 +402,43 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
   // read-only rather than letting it be picked independently.
   const getDayNameFromDate = (dateStr?: string) =>
     dateStr ? getDayName(String(new Date(dateStr + "T12:00:00Z").getUTCDay())) : "—";
+
+  // ---- Review period dropdown ----
+  // One dropdown covers both shapes: the rolling "Last N days" options and the
+  // calendar-month option. Rolling values are the day count as a string; the calendar
+  // option uses the period_mode value itself so the two can't be confused.
+  const CALENDAR_MONTH_VALUE = "last_calendar_month" as const;
+  const ROLLING_LOOKBACK_OPTIONS = [3, 7, 14, 30];
+
+  /** Current dropdown selection for a group. */
+  const periodSelectValue = (g: { periodMode?: string | null; lookbackDays?: number | null }) =>
+    isCalendarPeriodMode(g.periodMode) ? CALENDAR_MONTH_VALUE : String(g.lookbackDays || 7);
+
+  /**
+   * Field patch for a dropdown choice. Picking "Last month" also forces monthly
+   * frequency — a calendar-month digest sent weekly would deliver the same email four
+   * times. Picking a rolling option leaves frequency alone (it always has).
+   */
+  const periodSelectPatch = (v: string) =>
+    v === CALENDAR_MONTH_VALUE
+      ? { periodMode: CALENDAR_MONTH_VALUE, frequency: "monthly" as const, lookbackOffset: 0 }
+      : { periodMode: "rolling" as const, lookbackDays: parseInt(v), lookbackOffset: 0 };
+
+  /**
+   * Calendar-month groups should send just after the month closes. If the start date
+   * lands mid-month the first send still covers the previous month, but it arrives days
+   * late — worth flagging rather than silently rewriting the date they chose.
+   */
+  const calendarMonthStartWarning = (g: { periodMode?: string | null; startDate?: string | null }) => {
+    if (!isCalendarPeriodMode(g.periodMode) || !g.startDate) return null;
+    const day = new Date(g.startDate + "T12:00:00Z").getUTCDate();
+    // Only days 1–3 are fine. A late day-of-month is the worst case, not an acceptable
+    // one: the send day never rolls into the following month (monthly occurrences are
+    // clamped within the month), so a start date on the 28th means each month's recap
+    // arrives 27 days after that month ended.
+    if (day <= 3) return null;
+    return `Start date is the ${day}th of the month, so each month's recap arrives ${day - 1} days after that month ends. Set it to the 1st to send as soon as the month closes.`;
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -661,14 +701,24 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               <Select
                                 value={editingGroup.frequency || "weekly"}
                                 onValueChange={(v: "weekly" | "biweekly" | "monthly") => {
+                                  // Changing frequency snaps the rolling window to match it. A
+                                  // calendar-month period defines its own boundaries, so leave it
+                                  // alone — otherwise picking a frequency silently reverts it to
+                                  // a rolling 30 days.
+                                  if (isCalendarPeriodMode(editingGroup.periodMode)) {
+                                    setEditingGroup({ ...editingGroup, frequency: v });
+                                    return;
+                                  }
                                   const lookback = v === "monthly" ? 30 : v === "biweekly" ? 14 : 7;
                                   setEditingGroup({ ...editingGroup, frequency: v, lookbackDays: lookback, lookbackOffset: 0 });
                                 }}
                               >
                                 <SelectTrigger data-testid={`select-edit-group-frequency-${group.id}`}><SelectValue /></SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="weekly">Every week</SelectItem>
-                                  <SelectItem value="biweekly">Every other week</SelectItem>
+                                  {/* A calendar-month period only has one sensible cadence: sending
+                                      it weekly would deliver the same month's recap 4–5 times. */}
+                                  <SelectItem value="weekly" disabled={isCalendarPeriodMode(editingGroup.periodMode)}>Every week</SelectItem>
+                                  <SelectItem value="biweekly" disabled={isCalendarPeriodMode(editingGroup.periodMode)}>Every other week</SelectItem>
                                   <SelectItem value="monthly">Once a month</SelectItem>
                                 </SelectContent>
                               </Select>
@@ -698,28 +748,48 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               </div>
                             </div>
                             <div className="space-y-2">
-                              <Label>Review Period (days back, excluding today)</Label>
+                              <Label>Review Period</Label>
                               <div className="flex items-center gap-3">
-                                <Select value={(editingGroup.lookbackDays || 7).toString()} onValueChange={(v) => setEditingGroup({ ...editingGroup, lookbackDays: parseInt(v) })}>
-                                  <SelectTrigger className="w-32" data-testid={`select-edit-group-lookback-${group.id}`}><SelectValue /></SelectTrigger>
+                                <Select
+                                  value={periodSelectValue(editingGroup)}
+                                  onValueChange={(v) => setEditingGroup({ ...editingGroup, ...periodSelectPatch(v) } as any)}
+                                >
+                                  <SelectTrigger className="w-44" data-testid={`select-edit-group-lookback-${group.id}`}><SelectValue /></SelectTrigger>
                                   <SelectContent>
-                                    {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                                    {ROLLING_LOOKBACK_OPTIONS.map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                                    <SelectItem value={CALENDAR_MONTH_VALUE}>Last month (calendar)</SelectItem>
                                   </SelectContent>
                                 </Select>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingGroup({ ...editingGroup, lookbackOffset: (editingGroup.lookbackOffset || 0) > 0 ? 0 : (editingGroup.lookbackDays || 7) })}
-                                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(editingGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
-                                  data-testid={`button-edit-group-prev-period-${group.id}`}
-                                  title={(editingGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
-                                >
-                                  <History className="w-3 h-3" />
-                                  Prior period
-                                </button>
+                                {/* The prior-period shift only means something for a rolling window. */}
+                                {!isCalendarPeriodMode(editingGroup.periodMode) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingGroup({ ...editingGroup, lookbackOffset: (editingGroup.lookbackOffset || 0) > 0 ? 0 : (editingGroup.lookbackDays || 7) })}
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(editingGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
+                                    data-testid={`button-edit-group-prev-period-${group.id}`}
+                                    title={(editingGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
+                                  >
+                                    <History className="w-3 h-3" />
+                                    Prior period
+                                  </button>
+                                )}
                               </div>
-                              {(editingGroup.lookbackOffset || 0) > 0 && (
+                              {isCalendarPeriodMode(editingGroup.periodMode) ? (
+                                <p className="text-xs text-muted-foreground" data-testid={`text-edit-group-period-help-${group.id}`}>
+                                  Covers the whole previous calendar month — 1st through the last day — and nothing from the current month. Sends once a month (Phoenix time).
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">Days back, excluding today.</p>
+                              )}
+                              {(editingGroup.lookbackOffset || 0) > 0 && !isCalendarPeriodMode(editingGroup.periodMode) && (
                                 <p className="text-xs text-muted-foreground">
                                   Window shifts back — covers {(editingGroup.lookbackOffset || 0) + (editingGroup.lookbackDays || 7)}–{editingGroup.lookbackOffset || 0} days ago instead of the most recent {editingGroup.lookbackDays || 7} days
+                                </p>
+                              )}
+                              {calendarMonthStartWarning(editingGroup as any) && (
+                                <p className="text-xs text-amber-600 dark:text-amber-500 flex items-start gap-1.5" data-testid={`text-edit-group-period-warning-${group.id}`}>
+                                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                                  {calendarMonthStartWarning(editingGroup as any)}
                                 </p>
                               )}
                             </div>
@@ -937,7 +1007,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                               <span className="mx-2">•</span>
                               <span>{group.minStars}-{group.maxStars} stars</span>
                               <span className="mx-2">•</span>
-                              <span>{group.lookbackOffset > 0 ? `Prior ${group.lookbackDays || 7} days` : `Last ${group.lookbackDays || 7} days`}</span>
+                              <span>{shortPeriodLabel(group)}</span>
                               <span className="mx-2">•</span>
                               <span>{group.locationIds.length} location{group.locationIds.length !== 1 ? 's' : ''}</span>
                               {(group as any).startDate && (
@@ -995,14 +1065,22 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                       <Select
                         value={newGroup.frequency}
                         onValueChange={(v: "weekly" | "biweekly" | "monthly") => {
+                          // See the edit form: don't let a frequency change silently revert a
+                          // calendar-month period to a rolling 30 days.
+                          if (isCalendarPeriodMode(newGroup.periodMode)) {
+                            setNewGroup({ ...newGroup, frequency: v });
+                            return;
+                          }
                           const lookback = v === "monthly" ? 30 : v === "biweekly" ? 14 : 7;
                           setNewGroup({ ...newGroup, frequency: v, lookbackDays: lookback, lookbackOffset: 0 });
                         }}
                       >
                         <SelectTrigger data-testid="select-new-group-frequency"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="weekly">Every week</SelectItem>
-                          <SelectItem value="biweekly">Every other week</SelectItem>
+                          {/* A calendar-month period only has one sensible cadence: sending
+                              it weekly would deliver the same month's recap 4–5 times. */}
+                          <SelectItem value="weekly" disabled={isCalendarPeriodMode(newGroup.periodMode)}>Every week</SelectItem>
+                          <SelectItem value="biweekly" disabled={isCalendarPeriodMode(newGroup.periodMode)}>Every other week</SelectItem>
                           <SelectItem value="monthly">Once a month</SelectItem>
                         </SelectContent>
                       </Select>
@@ -1032,28 +1110,48 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label>Review Period (days back, excluding today)</Label>
+                      <Label>Review Period</Label>
                       <div className="flex items-center gap-3">
-                        <Select value={newGroup.lookbackDays.toString()} onValueChange={(v) => setNewGroup({ ...newGroup, lookbackDays: parseInt(v) })}>
-                          <SelectTrigger className="w-32" data-testid="select-new-group-lookback"><SelectValue /></SelectTrigger>
+                        <Select
+                          value={periodSelectValue(newGroup)}
+                          onValueChange={(v) => setNewGroup({ ...newGroup, ...periodSelectPatch(v) })}
+                        >
+                          <SelectTrigger className="w-44" data-testid="select-new-group-lookback"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {[3, 7, 14, 30].map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                            {ROLLING_LOOKBACK_OPTIONS.map(n => <SelectItem key={n} value={n.toString()}>Last {n} days</SelectItem>)}
+                            <SelectItem value={CALENDAR_MONTH_VALUE}>Last month (calendar)</SelectItem>
                           </SelectContent>
                         </Select>
-                        <button
-                          type="button"
-                          onClick={() => setNewGroup({ ...newGroup, lookbackOffset: (newGroup.lookbackOffset || 0) > 0 ? 0 : newGroup.lookbackDays })}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(newGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
-                          data-testid="button-new-group-prev-period"
-                          title={(newGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
-                        >
-                          <History className="w-3 h-3" />
-                          Prior period
-                        </button>
+                        {/* The prior-period shift only means something for a rolling window. */}
+                        {!isCalendarPeriodMode(newGroup.periodMode) && (
+                          <button
+                            type="button"
+                            onClick={() => setNewGroup({ ...newGroup, lookbackOffset: (newGroup.lookbackOffset || 0) > 0 ? 0 : newGroup.lookbackDays })}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors ${(newGroup.lookbackOffset || 0) > 0 ? "bg-primary text-primary-foreground border-primary" : "border-input bg-background hover:bg-muted text-muted-foreground"}`}
+                            data-testid="button-new-group-prev-period"
+                            title={(newGroup.lookbackOffset || 0) > 0 ? "Currently showing the previous period — click to switch back to current period" : "Click to look back one extra period (e.g. days 8–14 instead of days 1–7)"}
+                          >
+                            <History className="w-3 h-3" />
+                            Prior period
+                          </button>
+                        )}
                       </div>
-                      {(newGroup.lookbackOffset || 0) > 0 && (
+                      {isCalendarPeriodMode(newGroup.periodMode) ? (
+                        <p className="text-xs text-muted-foreground" data-testid="text-new-group-period-help">
+                          Covers the whole previous calendar month — 1st through the last day — and nothing from the current month. Sends once a month (Phoenix time).
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Days back, excluding today.</p>
+                      )}
+                      {(newGroup.lookbackOffset || 0) > 0 && !isCalendarPeriodMode(newGroup.periodMode) && (
                         <p className="text-xs text-muted-foreground">
                           Window shifts back — covers {(newGroup.lookbackOffset || 0) + newGroup.lookbackDays}–{newGroup.lookbackOffset || 0} days ago instead of the most recent {newGroup.lookbackDays} days
+                        </p>
+                      )}
+                      {calendarMonthStartWarning(newGroup) && (
+                        <p className="text-xs text-amber-600 dark:text-amber-500 flex items-start gap-1.5" data-testid="text-new-group-period-warning">
+                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                          {calendarMonthStartWarning(newGroup)}
                         </p>
                       )}
                     </div>
