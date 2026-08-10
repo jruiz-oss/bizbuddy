@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Loader2 } from "lucide-react";
 import CopyReview from "@/pages/copy-review";
+import ResetPassword from "@/pages/reset-password";
 import Dashboard from "@/pages/dashboard";
 import Locations from "@/pages/locations";
 import Jobs from "@/pages/jobs";
@@ -150,6 +151,12 @@ function AppContent() {
   // Public route — accessible without auth (linked from review emails)
   if (window.location.pathname === "/copy-review") {
     return <CopyReview />;
+  }
+
+  // Public route — reached from the password-reset email, before any Google
+  // session or local-user selection exists.
+  if (window.location.pathname === "/reset-password") {
+    return <ResetPassword />;
   }
 
   if (isLoading) {

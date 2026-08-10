@@ -16,7 +16,7 @@ import type { LocalUser } from "@shared/schema";
 // API returns passwordHash stripped, hasPassword added
 type SafeLocalUser = Omit<LocalUser, 'passwordHash'> & { hasPassword: boolean };
 
-type View = 'list' | 'login' | 'setup' | 'create' | 'edit' | 'invites';
+type View = 'list' | 'login' | 'setup' | 'create' | 'edit' | 'invites' | 'forgot';
 
 type InviteCode = {
   id: string;
@@ -42,6 +42,9 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   // login form
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  // forgot-password form
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSubmitted, setForgotSubmitted] = useState(false);
   // setup form
   const [setupEmail, setSetupEmail] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
@@ -58,6 +61,8 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
 
   const resetForm = () => {
     setPassword("");
+    setForgotEmail("");
+    setForgotSubmitted(false);
     setSetupEmail("");
     setSetupPassword("");
     setSetupInviteCode("");
@@ -102,6 +107,21 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
         description: message,
         variant: "destructive",
       });
+    },
+  });
+
+  const forgotPasswordMutation = useMutation({
+    mutationFn: async (email: string) => {
+      const res = await apiRequest("POST", "/api/local-users/forgot-password", { email });
+      return res.json();
+    },
+    onSuccess: () => {
+      // Always show the same confirmation regardless of whether the email
+      // matched an account — the server intentionally never reveals that.
+      setForgotSubmitted(true);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: parseApiError(err, "Something went wrong. Please try again."), variant: "destructive" });
     },
   });
 
@@ -426,6 +446,14 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </Button>
         </div>
+        <button
+          type="button"
+          className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+          onClick={() => { setForgotEmail(targetUser?.email || ""); setForgotSubmitted(false); setView('forgot'); }}
+          data-testid="button-forgot-password"
+        >
+          Forgot password?
+        </button>
       </div>
       <div className="flex gap-2 pt-2">
         <Button variant="outline" className="flex-1" onClick={() => { setView('list'); setPassword(""); }}>
@@ -435,6 +463,66 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           {loginMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
           Sign In
         </Button>
+      </div>
+    </div>
+  );
+
+  const renderForgot = () => (
+    <div className="space-y-4">
+      {forgotSubmitted ? (
+        <div className="text-center py-4 space-y-2">
+          <p className="font-medium">Check your email</p>
+          <p className="text-sm text-muted-foreground">
+            If that email is on a team account, we've sent a link to reset the password. It expires in 1 hour.
+          </p>
+        </div>
+      ) : (
+        <>
+          {targetUser && (
+            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
+              <Avatar className="h-10 w-10">
+                {targetUser.profilePictureUrl ? <AvatarImage src={targetUser.profilePictureUrl} alt={targetUser.name} /> : null}
+                <AvatarFallback>{getInitials(targetUser.name)}</AvatarFallback>
+              </Avatar>
+              <div>
+                <p className="font-medium">{targetUser.name}</p>
+                {targetUser.title && <p className="text-sm text-muted-foreground">{targetUser.title}</p>}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <Label htmlFor="forgot-email">Email</Label>
+            <Input
+              id="forgot-email"
+              type="email"
+              value={forgotEmail}
+              onChange={(e) => setForgotEmail(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && forgotEmail.trim() && forgotPasswordMutation.mutate(forgotEmail.trim())}
+              placeholder="you@company.com"
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">Enter the email on your account and we'll send a reset link.</p>
+          </div>
+        </>
+      )}
+      <div className="flex gap-2 pt-2">
+        <Button
+          variant="outline"
+          className="flex-1"
+          onClick={() => { setView(targetUser?.hasPassword ? 'login' : 'list'); setForgotSubmitted(false); }}
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />Back
+        </Button>
+        {!forgotSubmitted && (
+          <Button
+            className="flex-1"
+            onClick={() => forgotPasswordMutation.mutate(forgotEmail.trim())}
+            disabled={!forgotEmail.trim() || forgotPasswordMutation.isPending}
+          >
+            {forgotPasswordMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            Send Reset Link
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -640,6 +728,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     create: "Add Team Member",
     edit: "Edit Profile",
     invites: "Invite Codes",
+    forgot: "Reset Password",
   };
 
   const descMap: Record<View, string> = {
@@ -649,6 +738,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     create: "Fill in the details for the new team member",
     edit: "Update profile info",
     invites: "Generate codes for new team members to set up their accounts",
+    forgot: "We'll email you a link to set a new password",
   };
 
   return (
@@ -673,6 +763,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             <>
               {view === 'list' && renderList()}
               {view === 'login' && renderLogin()}
+              {view === 'forgot' && renderForgot()}
               {view === 'setup' && renderSetup()}
               {view === 'create' && renderProfileForm(true)}
               {view === 'edit' && renderProfileForm(false)}

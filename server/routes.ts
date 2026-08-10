@@ -1136,6 +1136,110 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Request a password reset email. Unauthenticated by design (that's the
+  // point), so it's throttled per IP the same way /setup is. Always responds
+  // with the same generic message whether or not the email matched an
+  // account — never confirm/deny which emails exist on the roster.
+  app.post("/api/local-users/forgot-password", async (req, res) => {
+    const genericResponse = { message: "If that email is on a team account, a reset link is on its way." };
+    try {
+      const rl = rateLimit(`forgot-password-ip:${clientIp(req)}`, { max: 5, windowMs: 15 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      if (!rl.ok) {
+        res.setHeader('Retry-After', String(rl.retryAfterSec || 0));
+        return res.status(429).json({ error: `Too many requests. Try again in ${Math.ceil((rl.retryAfterSec || 0) / 60)} minute(s).` });
+      }
+
+      const { email } = req.body;
+      if (!email || typeof email !== 'string') {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+
+      const localUser = await storage.getLocalUserByEmail(email.trim());
+      // Only accounts that have already completed setup (have a password) can
+      // reset one — an unconfigured account should go through /setup instead.
+      if (!localUser || !localUser.passwordHash) {
+        return res.json(genericResponse);
+      }
+
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const resetTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+      const resetTokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      await storage.updateLocalUser(localUser.id, { resetTokenHash, resetTokenExpiresAt } as any);
+
+      const { resolveGmailSendTokens } = await import("./scheduler");
+      const gmailTokens = await resolveGmailSendTokens();
+      if (!gmailTokens) {
+        console.error(`⚠️ [Password Reset] No usable Gmail connection — could not send reset email to ${localUser.email}`);
+        return res.json(genericResponse);
+      }
+
+      const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+      const resetUrl = `${frontendUrl}/reset-password?token=${rawToken}`;
+      const sendResult = await sendHtmlEmail(
+        localUser.email!,
+        'Reset your BizBuddy password',
+        `<p>Hi ${localUser.name},</p>` +
+        `<p>Someone requested a password reset for your BizBuddy account. Click below to set a new password — this link expires in 1 hour:</p>` +
+        `<p><a href="${resetUrl}">${resetUrl}</a></p>` +
+        `<p>If you didn't request this, you can ignore this email — your password won't change.</p>`,
+        gmailTokens,
+      );
+      if (!sendResult.success) {
+        console.error(`⚠️ [Password Reset] Failed to send reset email to ${localUser.email}: ${sendResult.error}`);
+      }
+
+      res.json(genericResponse);
+    } catch (error) {
+      console.error('Error requesting password reset:', error);
+      // Same generic response even on an unexpected error — no leaking whether
+      // the email exists via error-vs-success behavior differences.
+      res.json(genericResponse);
+    }
+  });
+
+  // Complete a password reset with a token from the email above.
+  app.post("/api/local-users/reset-password", async (req, res) => {
+    try {
+      const rl = rateLimit(`reset-password-ip:${clientIp(req)}`, { max: 10, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      if (!rl.ok) {
+        res.setHeader('Retry-After', String(rl.retryAfterSec || 0));
+        return res.status(429).json({ error: `Too many attempts. Try again in ${Math.ceil((rl.retryAfterSec || 0) / 60)} minute(s).` });
+      }
+
+      const { token, password } = req.body;
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'Reset token is required' });
+      }
+      const pwError = validatePassword(password);
+      if (pwError) {
+        return res.status(400).json({ error: pwError });
+      }
+
+      const resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const localUser = await storage.getLocalUserByResetTokenHash(resetTokenHash);
+      if (!localUser || !localUser.resetTokenExpiresAt || localUser.resetTokenExpiresAt < new Date()) {
+        return res.status(400).json({ error: 'Invalid or expired reset link. Request a new one.' });
+      }
+
+      const passwordHash = hashPassword(password);
+      await storage.updateLocalUser(localUser.id, {
+        passwordHash,
+        resetTokenHash: null,
+        resetTokenExpiresAt: null,
+      } as any);
+
+      // A successful reset means they now know the correct password —
+      // clear any stale lockout on this account so they aren't stuck
+      // waiting out a block caused by earlier failed attempts.
+      clearRateLimit(`login:${clientIp(req)}:${localUser.id}`);
+
+      res.json({ message: 'Password updated. You can log in now.' });
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      res.status(500).json({ error: 'Failed to reset password' });
+    }
+  });
+
   app.post("/api/local-users", async (req, res) => {
     try {
       const userId = req.session.userId;

@@ -57,6 +57,13 @@
       "when": 1786320000000,
       "tag": "0009_review_email_period_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786330000000,
+      "tag": "0010_password_reset",
+      "breakpoints": true
     }
   ]
 }

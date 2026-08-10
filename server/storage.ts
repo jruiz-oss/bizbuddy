@@ -109,6 +109,8 @@ export interface IStorage {
   // Local Users
   getLocalUsersByUserId(userId: string): Promise<LocalUser[]>;
   getLocalUser(id: string): Promise<LocalUser | undefined>;
+  getLocalUserByEmail(email: string): Promise<LocalUser | undefined>;
+  getLocalUserByResetTokenHash(resetTokenHash: string): Promise<LocalUser | undefined>;
   createLocalUser(localUser: InsertLocalUser): Promise<LocalUser>;
   updateLocalUser(id: string, localUser: Partial<InsertLocalUser>): Promise<LocalUser>;
   deleteLocalUser(id: string): Promise<void>;
@@ -799,6 +801,20 @@ export class DatabaseStorage implements IStorage {
 
   async getLocalUser(id: string): Promise<LocalUser | undefined> {
     const [user] = await db.select().from(localUsers).where(eq(localUsers.id, id));
+    return user || undefined;
+  }
+
+  async getLocalUserByEmail(email: string): Promise<LocalUser | undefined> {
+    const [user] = await db.select().from(localUsers)
+      .where(and(eq(localUsers.email, email), eq(localUsers.isActive, true)));
+    return user || undefined;
+  }
+
+  // Looks up by the HASH of a reset token, never the raw token. Callers are
+  // responsible for hashing before calling this and for checking expiry.
+  async getLocalUserByResetTokenHash(resetTokenHash: string): Promise<LocalUser | undefined> {
+    const [user] = await db.select().from(localUsers)
+      .where(and(eq(localUsers.resetTokenHash, resetTokenHash), eq(localUsers.isActive, true)));
     return user || undefined;
   }
 

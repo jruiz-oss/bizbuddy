@@ -290,6 +290,12 @@ export const localUsers = pgTable("local_users", {
   // App-level credentials (independent of Google OAuth)
   email: text("email").unique(),
   passwordHash: text("password_hash"),
+  // Self-service password reset. We store only a hash of the token (never the
+  // raw value) so a DB read alone can't be used to reset someone's password —
+  // same reasoning as passwordHash itself. Expires quickly and is cleared the
+  // moment it's used or superseded by a newer request.
+  resetTokenHash: text("reset_token_hash"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

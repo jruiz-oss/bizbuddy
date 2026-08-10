@@ -436,7 +436,7 @@ async function checkScheduledReviewEmails() {
  * Fallback: the most recently updated user that still has a refresh token, then
  * any user with an access token — deterministic instead of arbitrary.
  */
-async function resolveGmailSendTokens(): Promise<UserTokens | null> {
+export async function resolveGmailSendTokens(): Promise<UserTokens | null> {
   try {
     const [conn] = await db.select().from(googleConnection).where(eq(googleConnection.id, 1)).limit(1);
     if (conn?.accessToken) {
