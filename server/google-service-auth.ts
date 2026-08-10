@@ -306,6 +306,29 @@ class GoogleOAuthAuth {
     };
   }
 
+  // `needsReauth` used to be set ONLY inside restoreTokens()'s boot-time
+  // refresh — but once the singleton has credentials in memory,
+  // ensureAuthenticated() short-circuits and never calls restoreTokens()
+  // again. That let a refresh token die silently: every live API call
+  // (perf sync, location sync, posting, etc.) triggers its own internal
+  // token refresh via google-auth-library, and if THAT refresh fails with
+  // invalid_grant, the error just propagates to the caller — needsReauth
+  // never got flipped, so the amber reconnect banner never showed even
+  // though the connection had been fully dead for days.
+  //
+  // Callers that catch an error from any Google API call should pass it
+  // here. Idempotent and cheap to call on every failure; a later
+  // successful refresh (the 'tokens' listener above) clears the flag.
+  flagReauthIfInvalidGrant(err: any, context?: string): boolean {
+    const msg = String(err?.response?.data?.error || err?.message || err || '');
+    const isInvalidGrant = msg.includes('invalid_grant');
+    if (isInvalidGrant && !this.needsReauth) {
+      this.needsReauth = true;
+      console.warn(`⚠️ Shared Google refresh token is dead — flagging needsReauth${context ? ` (detected during: ${context})` : ''}`);
+    }
+    return isInvalidGrant;
+  }
+
   // Get user info from Google
   async getUserInfo() {
     if (!this.accessToken) {

@@ -732,6 +732,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
       }
 
+      // regenerateSession() below wipes the whole session object, including
+      // localUserId (which local team-member profile is active). Capture it
+      // first so we can restore it after — otherwise every Google (re)connect
+      // (including the "Reconnect Google" banner action) silently kicks the
+      // active profile out of anything gated by getLocalUserId() — invite
+      // codes, team management, etc. — while the client UI still shows them
+      // as logged in (it restores the profile display from localStorage
+      // without ever re-establishing the server-side session), producing a
+      // confusing generic "failed" error with no obvious cause.
+      const previousLocalUserId = typeof (req.session as any)?.localUserId === 'string'
+        ? (req.session as any).localUserId
+        : null;
+
       // Prevent session fixation: issue a fresh session ID before elevating
       // this session to an authenticated one.
       await regenerateSession(req);
@@ -739,7 +752,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Store user ID in session
       req.session.userId = user.id;
       req.session.googleId = user.googleId;
-      
+
+      // Restore the local-user selection, but only if it still belongs to
+      // this same agency account — never trust it blindly across accounts.
+      if (previousLocalUserId) {
+        try {
+          const previousLocalUser = await storage.getLocalUser(previousLocalUserId);
+          if (previousLocalUser && previousLocalUser.userId === user.id) {
+            (req.session as any).localUserId = previousLocalUserId;
+          }
+        } catch (e) {
+          console.error('Failed to restore local user selection after Google (re)connect:', e);
+        }
+      }
+
       console.log('✅ User authenticated, tokens saved, and session created:', { userId: user.id, email: user.email });
       
       // Redirect to the frontend after successful authentication.
@@ -980,7 +1006,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Throttle password guessing: per IP+account AND a looser per-IP cap so an
       // attacker can't just rotate through account IDs from one machine.
       const rlKey = `login:${clientIp(req)}:${req.params.id}`;
-      const rl = rateLimit(rlKey, { max: 5, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
+      // Bumped from 5 → 10 (matches the /setup endpoint's cap below) — 5 was
+      // tight enough that normal troubleshooting (switching profiles, retyping
+      // a password) could trip it and get mistaken for "my password stopped
+      // working" when it was actually a 429 lockout.
+      const rl = rateLimit(rlKey, { max: 10, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
       const rlIp = rateLimit(`login-ip:${clientIp(req)}`, { max: 30, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
       if (!rl.ok || !rlIp.ok) {
         const retry = Math.max(rl.retryAfterSec || 0, rlIp.retryAfterSec || 0);

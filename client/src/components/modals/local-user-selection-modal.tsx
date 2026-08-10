@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
+import { parseApiError } from "@/lib/parseApiError";
 import { useLocalUserContext } from "@/contexts/local-user-context";
 import { User, Plus, Pencil, Trash2, Loader2, Upload, X, RefreshCw, ArrowLeft, Eye, EyeOff, Ticket, Copy, Check, Ban } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -90,8 +91,17 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
       setShowSelectionModal(false);
       resetForm();
     },
-    onError: () => {
-      toast({ title: "Incorrect password", description: "Please try again.", variant: "destructive" });
+    onError: (err: Error) => {
+      // Distinguish an actual wrong password from a 429 rate-limit lockout —
+      // both used to show "Incorrect password", which reads as "my password
+      // stopped working" when it's really just a temporary lockout.
+      const message = parseApiError(err, "Please try again.");
+      const isRateLimited = /too many login attempts/i.test(message);
+      toast({
+        title: isRateLimited ? "Too many attempts" : "Incorrect password",
+        description: message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -172,8 +182,11 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     onSuccess: () => {
       refetchCodes();
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to generate code", variant: "destructive" });
+    onError: (err: Error) => {
+      // Surface the server's actual reason (e.g. "No local user selected" after
+      // a Google reconnect drops the session's active profile) instead of a
+      // generic message that hides what actually needs fixing.
+      toast({ title: "Error", description: parseApiError(err, "Failed to generate code"), variant: "destructive" });
     },
   });
 
@@ -185,8 +198,8 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
       refetchCodes();
       toast({ title: "Code revoked" });
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to revoke code", variant: "destructive" });
+    onError: (err: Error) => {
+      toast({ title: "Error", description: parseApiError(err, "Failed to revoke code"), variant: "destructive" });
     },
   });
 

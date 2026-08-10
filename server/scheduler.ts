@@ -138,6 +138,9 @@ export function initializeScheduler() {
         error?.response?.data?.error === "invalid_grant";
       const isSuspended =
         errStatus === 403 && /(disabled|suspended|permission_denied)/i.test(errMsg);
+      if (isInvalidGrant) {
+        (await import("./google-service-auth")).googleOAuthAuth.flagReauthIfInvalidGrant(error, "Weekly Sync");
+      }
       if (!activeUserId) {
         console.warn("[Weekly Sync] No active user resolved; skipping accountState propagation.");
         return;
@@ -578,6 +581,7 @@ export async function syncPerfData() {
         errorCount++;
         const msg = err?.message || String(err);
         if (!firstError) firstError = msg;
+        (await import("./google-service-auth")).googleOAuthAuth.flagReauthIfInvalidGrant(err, "Perf Sync");
         if (errorCount <= 3) {
           console.error(`❌ [Perf Sync] Error for location ${location.gbpLocationId}: ${msg}`);
         }
