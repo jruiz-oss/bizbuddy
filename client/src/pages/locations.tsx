@@ -450,29 +450,23 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   }, [filteredLocations.map((l) => l.id).join(",")]);
 
   // Right-side list shows ALL filtered locations (scrollable), not just
-  // those that have map coords. When a primary with coords is selected,
-  // sort the others by geographic distance; otherwise sort alphabetically.
+  // those that have map coords. Order is always alphabetical by name and does
+  // NOT depend on the selection — selecting or focusing a pin must never
+  // reshuffle the list under the cursor.
   const nearby = useMemo(() => {
-    type Row = { id: string; loc: ClientLocation; status: PinStatus; lat: number | null; lng: number | null; distance: number };
+    type Row = { id: string; loc: ClientLocation; status: PinStatus; lat: number | null; lng: number | null };
     const rows: Row[] = filteredLocations
       .map((l) => {
         const lat = l.latitude != null ? Number(l.latitude) : NaN;
         const lng = l.longitude != null ? Number(l.longitude) : NaN;
         const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
         const status = pinStatusFor(l, clientById.get(l.clientId));
-        const distance =
-          primary && hasCoords ? distanceKm(primary, { lat, lng } as PinPoint) : Number.POSITIVE_INFINITY;
-        return { id: l.id, loc: l, status, lat: hasCoords ? lat : null, lng: hasCoords ? lng : null, distance };
+        return { id: l.id, loc: l, status, lat: hasCoords ? lat : null, lng: hasCoords ? lng : null };
       });
 
-    if (primary) {
-      // Distance ascending; locations without coords sink to the bottom.
-      rows.sort((a, b) => a.distance - b.distance);
-    } else {
-      rows.sort((a, b) => a.loc.name.localeCompare(b.loc.name));
-    }
+    rows.sort((a, b) => a.loc.name.localeCompare(b.loc.name));
     return rows;
-  }, [primaryLocation, primary, filteredLocations, clientById]);
+  }, [filteredLocations, clientById]);
 
   // ───────── Selected location performance (Calls / Views / Rating) ─────────
   const [perfRange, setPerfRange] = useState<"7" | "30" | "90">("30");
@@ -1106,12 +1100,12 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
           {/* Right pane (~30%) */}
           <aside className="w-[360px] xl:w-[440px] 2xl:w-[560px] border border-border/60 flex flex-col bg-white overflow-hidden rounded-lg shadow-sm" data-testid="side-pane">
-            {/* NEARBY header */}
+            {/* Location list header */}
             <div className="border-b border-border/60 px-4 py-3 flex items-center justify-between">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide" data-testid="text-nearby-header">
-                {primary ? "Nearby" : "All locations"}{" "}
+                All locations{" "}
                 <span className="ml-1 text-gray-400 normal-case tracking-normal">
-                  · {nearby.length.toLocaleString()} {primary ? "shown" : "in list"}
+                  · {nearby.length.toLocaleString()} in list
                 </span>
               </div>
               <Button
