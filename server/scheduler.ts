@@ -108,8 +108,8 @@ export function initializeScheduler() {
     }
   });
   
-  // Run weekly location sync: checks daily at 3 AM UTC but only executes the full
-  // Google pull when 7+ days have passed since the last successful sync.
+  // Run daily location sync at 3 AM UTC — pulls from Google Business Profile
+  // every day (guarded so a restart can't trigger two runs within the same day).
   cron.schedule("0 3 * * *", async () => {
     let activeUserId: string | undefined;
     try {
@@ -122,16 +122,16 @@ export function initializeScheduler() {
 
       if (user?.lastLocationSyncAt) {
         const daysSinceLast = (Date.now() - user.lastLocationSyncAt.getTime()) / 86400000;
-        if (daysSinceLast < 7) {
-          console.log(`⏭️ [Weekly Sync] Skipping — last sync was ${daysSinceLast.toFixed(1)} days ago (next sync in ~${(7 - daysSinceLast).toFixed(1)} days)`);
+        if (daysSinceLast < 1) {
+          console.log(`⏭️ [Daily Sync] Skipping — last sync was ${daysSinceLast.toFixed(1)} days ago (next sync in ~${(1 - daysSinceLast).toFixed(1)} days)`);
           return;
         }
       }
 
-      console.log("🔄 [Weekly Sync] Starting scheduled location sync from Google Business Profile...");
+      console.log("🔄 [Daily Sync] Starting scheduled location sync from Google Business Profile...");
       await syncLocationsFromGoogle();
     } catch (error: any) {
-      console.error("❌ [Weekly Sync] Scheduled sync failed:", error);
+      console.error("❌ [Daily Sync] Scheduled sync failed:", error);
       const errMsg = String(error?.message || error?.response?.data?.error || error || "");
       const errStatus = error?.response?.status ?? error?.status;
       const isInvalidGrant =
@@ -140,10 +140,10 @@ export function initializeScheduler() {
       const isSuspended =
         errStatus === 403 && /(disabled|suspended|permission_denied)/i.test(errMsg);
       if (isInvalidGrant) {
-        (await import("./google-service-auth")).googleOAuthAuth.flagReauthIfInvalidGrant(error, "Weekly Sync");
+        (await import("./google-service-auth")).googleOAuthAuth.flagReauthIfInvalidGrant(error, "Daily Sync");
       }
       if (!activeUserId) {
-        console.warn("[Weekly Sync] No active user resolved; skipping accountState propagation.");
+        console.warn("[Daily Sync] No active user resolved; skipping accountState propagation.");
         return;
       }
       try {
@@ -151,12 +151,12 @@ export function initializeScheduler() {
           await db.update(clients)
             .set({ accountState: "needs_reauth", updatedAt: new Date() })
             .where(eq(clients.userId, activeUserId));
-          console.warn(`⚠️  [Weekly Sync] Marked clients for user ${activeUserId} as needs_reauth (invalid_grant)`);
+          console.warn(`⚠️  [Daily Sync] Marked clients for user ${activeUserId} as needs_reauth (invalid_grant)`);
         } else if (isSuspended) {
           await db.update(clients)
             .set({ accountState: "suspended", updatedAt: new Date() })
             .where(eq(clients.userId, activeUserId));
-          console.warn(`⚠️  [Weekly Sync] Marked clients for user ${activeUserId} as suspended (Google 403)`);
+          console.warn(`⚠️  [Daily Sync] Marked clients for user ${activeUserId} as suspended (Google 403)`);
         }
       } catch (markErr) {
         console.error("Failed to update accountState after scheduler failure:", markErr);
@@ -233,7 +233,7 @@ export function initializeScheduler() {
     }
   }, 30_000);
 
-  console.log("✅ Scheduler initialized - checking every minute for scheduled posts and review emails; weekly location sync at 3 AM UTC");
+  console.log("✅ Scheduler initialized - checking every minute for scheduled posts and review emails; daily location sync at 3 AM UTC");
 }
 
 // ---- Date-anchored scheduling helpers (Phoenix time, UTC-7 fixed, no DST) ----
@@ -668,7 +668,7 @@ export async function syncLocationsFromGoogle() {
     }
   }
 
-  console.log(`✅ [Weekly Sync] Done — ${newCount} new, ${updatedCount} updated locations across ${accounts.length} accounts`);
+  console.log(`✅ [Daily Sync] Done — ${newCount} new, ${updatedCount} updated locations across ${accounts.length} accounts`);
 
   // Trigger background geocoding for any rows still missing lat/lng (whether
   // GBP didn't return latlng on this run or on prior syncs). The worker is
