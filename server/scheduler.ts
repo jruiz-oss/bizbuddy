@@ -653,7 +653,7 @@ export async function syncLocationsFromGoogle() {
             clientId: existing.clientId,
             clientLocationId: locationId,
             action: "location_info_changed",
-            // Detected by the unattended weekly Google sync — no human triggered it,
+            // Detected by the unattended daily Google sync — no human triggered it,
             // so it legitimately shows as "System" rather than the account owner.
             payloadJson: { changes: infoChanges, source: "system" },
           });
@@ -683,7 +683,7 @@ export async function syncLocationsFromGoogle() {
     console.error("🗺️  [Sync] Failed to enqueue geocode backfill:", geoErr);
   }
 
-  // Record the sync timestamp so the weekly guard can calculate the next window
+  // Record the sync timestamp so the daily guard can calculate the next window
   await db.update(users)
     .set({ lastLocationSyncAt: new Date() })
     .where(eq(users.id, userId));

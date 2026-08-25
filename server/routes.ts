@@ -873,11 +873,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: 'User not found' });
       }
 
-      // Calculate next sync date: 7 days after last sync, or next 3 AM UTC if never synced
+      // Calculate next sync date: 1 day after last sync, or next 3 AM UTC if never synced
       const lastSync = user.lastLocationSyncAt ? new Date(user.lastLocationSyncAt) : null;
       let nextSync: Date;
       if (lastSync) {
-        nextSync = new Date(lastSync.getTime() + 7 * 24 * 60 * 60 * 1000);
+        nextSync = new Date(lastSync.getTime() + 1 * 24 * 60 * 60 * 1000);
         nextSync.setUTCHours(3, 0, 0, 0);
       } else {
         const now = new Date();
@@ -1624,7 +1624,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log(`✅ Sync complete: ${accountsCount} new accounts, ${newLocationsCount} new locations, ${updatedLocationsCount} updated locations`);
       console.log(`📊 Final stats: ${allAccountsToProcess.length} accounts processed, ${totalLocations} total locations`);
 
-      // Record sync timestamp so the bi-weekly scheduler knows when the last sync was
+      // Record sync timestamp so the daily scheduler knows when the last sync was
       await db.update(users)
         .set({ lastLocationSyncAt: new Date() })
         .where(eq(users.id, userId));
@@ -2018,7 +2018,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // activity has no team member attached (e.g. the owner signed in through
       // Google and performed the action directly, so there's no local-user row).
       // Genuinely unattended actions (marked payloadJson.source === "system", like
-      // the weekly Google sync) intentionally skip this and remain "System".
+      // the daily Google sync) intentionally skip this and remain "System".
       const client = await storage.getClient(client_id);
       const ownerUser = client?.userId ? await storage.getUser(client.userId) : undefined;
       const ownerFallback = ownerUser

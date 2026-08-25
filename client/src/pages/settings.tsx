@@ -1394,7 +1394,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   Location Auto-Sync
                 </CardTitle>
                 <CardDescription>
-                  All location names, addresses, phone numbers, and hours are automatically pulled from Google Business Profile every 2 weeks.
+                  All location names, addresses, phone numbers, and hours are automatically pulled from Google Business Profile every day.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
