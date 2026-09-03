@@ -32,7 +32,7 @@ import { PlatformSelectionModal } from "@/components/modals/platform-selection-m
 import { PlatformSwitchButton } from "@/components/platform-switch-button";
 import { ApiErrorProvider } from "@/contexts/api-error-context";
 import { ApiErrorModal } from "@/components/api-error-modal";
-import { ReconnectBanner } from "@/components/reconnect-banner";
+import { ReconnectBanner, GoogleConnectionNotice } from "@/components/reconnect-banner";
 import { Terminal } from "lucide-react";
 
 interface RouterProps {
@@ -68,11 +68,14 @@ function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps
     }
   }, [platform, setLocation]);
 
-  // Block access to the app until a user is logged in
+  // Block access to the app until a user is logged in. This — the local-user
+  // picker — is the login screen for the team. It stays reachable regardless of
+  // the shared Google connection's health.
   if (!selectedLocalUser) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <LocalUserSelectionModal open={showSelectionModal} />
+        <GoogleConnectionNotice />
       </div>
     );
   }
@@ -142,9 +145,25 @@ function AppContent() {
   // Default to Commit Agency (most commonly used)
   const [selectedClientId, setSelectedClientId] = useState<string>("105017238673904546543");
 
-  // Check authentication status
-  const { data: authStatus, isLoading } = useQuery<{ authenticated: boolean }>({
+  // Health of the agency's SHARED Google connection. This is NOT "is this
+  // person allowed into the app" — everyone signs in with their own local-user
+  // account and works under the one shared Google connection. Gating the whole
+  // app on this used to lock the entire team out of the local-user login screen
+  // (and drop them on a Google sign-in page their own Google accounts are not
+  // allow-listed for) whenever the shared token was dead, or merely whenever a
+  // cold instance / DB hiccup made /api/auth/status answer false. It now only
+  // decides whether the reconnect banner shows and, on a true first run,
+  // whether we need someone to connect Google at all.
+  const { data: authStatus } = useQuery<{ authenticated: boolean }>({
     queryKey: ["/api/auth/status"],
+    retry: 1,
+  });
+
+  // The roster of local users. If there are none, nobody has ever connected
+  // Google and this is a genuine first-run bootstrap — the only case where the
+  // Google sign-in screen is the right thing to show.
+  const { data: localUsers, isLoading } = useQuery<Array<{ id: string }>>({
+    queryKey: ["/api/local-users"],
     retry: 1,
   });
 
@@ -172,7 +191,21 @@ function AppContent() {
 
   const devMode = localStorage.getItem("bizbuddy_devmode") === "true";
 
-  if (!authStatus?.authenticated && !devMode) {
+  // Explicit escape hatch: a super admin can always reach the Google connect
+  // flow at /connect-google, even before logging in and even when the shared
+  // connection is fine.
+  if (window.location.pathname === "/connect-google") {
+    return <Login />;
+  }
+
+  // First run only: no local users exist yet, so someone has to connect the
+  // agency Google account before there is anything to log into.
+  // Only when the roster query actually SUCCEEDED and came back empty. If it
+  // failed (network blip, cold instance), fall through to the local-user picker
+  // rather than throwing up a Google wall nobody on the team can get past.
+  const needsBootstrap =
+    Array.isArray(localUsers) && localUsers.length === 0 && !authStatus?.authenticated;
+  if (needsBootstrap && !devMode) {
     return <Login />;
   }
 

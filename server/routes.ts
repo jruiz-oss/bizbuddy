@@ -299,6 +299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const PUBLIC_API_PATHS = new Set<string>([
     "/api/health",
     "/api/auth/status",
+    "/api/auth/session",
     "/api/auth/logout",
     // NOTE: /api/auth/revoke-google is deliberately NOT public — it disconnects
     // the shared Google connection for the entire team (super_admin only).
@@ -343,6 +344,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!req.session?.userId) {
         return res.status(401).json({ message: "Authentication required" });
       }
+
+      // Lazily hydrate the shared Google connection ON THIS INSTANCE. The
+      // connection is an in-memory singleton, so a freshly started process —
+      // or any additional replica / serverless instance — holds no tokens
+      // until something loads them from the shared DB row. Only
+      // /api/auth/status used to do that, so a request landing on a cold
+      // instance hit routes guarded by `googleOAuthAuth.isAuthenticated()`
+      // and got a bogus 401 "Not authenticated", which the UI rendered as
+      // "your Google connection is broken, get a super admin to reconnect".
+      // Cheap: no-ops when the singleton already has credentials.
+      try {
+        const { googleOAuthAuth } = await import("./google-service-auth");
+        await googleOAuthAuth.ensureAuthenticated();
+      } catch (e) {
+        console.warn("Shared Google connection hydration failed (non-fatal):", e);
+      }
+
       next();
     } catch (err) {
       console.error("Auth gate error:", err);
@@ -803,6 +821,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Who is logged into the APP, according to the server session. This is
+  // deliberately separate from /api/auth/status: that one reports the health of
+  // the agency's single shared Google connection, this one reports whether THIS
+  // browser has a valid local-user session. The client previously trusted
+  // localStorage for the latter, so a browser could believe it was signed in
+  // long after the server session was gone — every request then 401'd and the
+  // UI blamed Google.
+  app.get("/api/auth/session", async (req, res) => {
+    try {
+      const localUserId = getLocalUserId(req);
+      if (!localUserId) return res.json({ localUser: null });
+      const localUser = await storage.getLocalUser(localUserId);
+      if (!localUser) return res.json({ localUser: null });
+      res.json({ localUser: safeLocalUser(localUser, { includeEmail: true }) });
+    } catch (error) {
+      console.error('Error reading app session:', error);
+      res.json({ localUser: null });
+    }
+  });
+
   app.post("/api/auth/logout", async (req, res) => {
     try {
       // Only end THIS user's app session. The Google connection is shared by the
@@ -855,13 +893,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // User Settings
   app.get("/api/user/settings", async (req, res) => {
     try {
-      const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      if (!googleOAuthAuth.isAuthenticated()) {
-        return res.status(401).json({ error: 'Not authenticated' });
-      }
-
-      // Get user ID from session
+      // NOTE: deliberately no googleOAuthAuth.isAuthenticated() guard here.
+      // These settings live in our own database and have nothing to do with the
+      // shared Google connection — gating them on it meant a dead Google token
+      // made the settings page return "Not authenticated", which the UI showed
+      // as a login/auth failure.
       const userId = req.session.userId;
       if (!userId) {
         return res.status(401).json({ error: 'No user session found. Please log in again.' });
@@ -906,13 +942,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/user/settings", async (req, res) => {
     try {
-      const { googleOAuthAuth } = await import("./google-service-auth");
-      
-      if (!googleOAuthAuth.isAuthenticated()) {
-        return res.status(401).json({ error: 'Not authenticated' });
-      }
-
-      // Get user ID from session
+      // NOTE: deliberately no googleOAuthAuth.isAuthenticated() guard here.
+      // These settings live in our own database and have nothing to do with the
+      // shared Google connection — gating them on it meant a dead Google token
+      // made the settings page return "Not authenticated", which the UI showed
+      // as a login/auth failure.
       const userId = req.session.userId;
       if (!userId) {
         return res.status(401).json({ error: 'No user session found. Please log in again.' });

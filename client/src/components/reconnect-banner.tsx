@@ -58,3 +58,42 @@ export function ReconnectBanner() {
     </div>
   );
 }
+
+// Same signal, shown on the login/profile-picker screen — where nobody is
+// signed in yet, so we can't know their role. Everyone can still log in
+// normally; this just explains why Google-touching actions may fail and gives
+// an admin a way to fix it before signing in.
+export function GoogleConnectionNotice() {
+  const { data } = useQuery<AuthStatus>({
+    queryKey: ["/api/auth/status"],
+    refetchInterval: 60_000,
+  });
+
+  if (data?.authenticated && !data?.needsReconnect) return null;
+
+  const account = data?.connectedEmail || "the company Google account";
+
+  return (
+    <div
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 max-w-md w-[calc(100%-2rem)] rounded-lg border border-amber-300 bg-amber-50 text-amber-900 px-4 py-3 text-sm flex items-start gap-2"
+      data-testid="notice-google-connection"
+    >
+      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+      <div className="min-w-0">
+        <p>
+          The shared Google connection for <strong>{account}</strong> needs to be
+          reconnected. You can still sign in — posting, hours and syncing will
+          fail until a super admin reconnects it.
+        </p>
+        <a
+          href="/connect-google"
+          className="mt-1 inline-flex items-center gap-1.5 underline underline-offset-2 font-medium"
+          data-testid="link-connect-google"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Reconnect Google (super admins)
+        </a>
+      </div>
+    </div>
+  );
+}

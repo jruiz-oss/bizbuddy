@@ -1,12 +1,20 @@
 import { AlertTriangle, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useApiError } from "@/contexts/api-error-context";
+import { useLocalUserContext } from "@/contexts/local-user-context";
 import { getApiUrl } from "@/lib/queryClient";
 
 export function ApiErrorModal() {
   const { error, clearApiError } = useApiError();
+  const { selectedLocalUser } = useLocalUserContext();
 
   if (!error.open) return null;
+
+  // Reconnecting Google re-runs OAuth for the SHARED agency connection, and
+  // only allow-listed Google accounts can complete it. Offering the button to
+  // everyone sent coworkers into a flow their own Google account gets rejected
+  // from — which is what made an expired token look like "I can't log in".
+  const canReconnect = selectedLocalUser?.role === "super_admin";
 
   const handleReauth = () => {
     window.location.href = getApiUrl("/auth/google");
@@ -56,13 +64,15 @@ export function ApiErrorModal() {
         {/* Helper note — only for genuine auth failures, where re-auth is the fix */}
         {error.isAuthError && (
           <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
-            This is often caused by an expired Google session. Re-authenticating usually fixes it.
+            {canReconnect
+              ? "This is often caused by an expired Google session. Reconnecting the shared Google account usually fixes it."
+              : "The shared Google connection looks expired. Ask a teammate with Google access (a super admin) to reconnect it — you don't need to sign out or do anything yourself."}
           </div>
         )}
 
         {/* Actions */}
         <div className="flex flex-col gap-2">
-          {error.isAuthError && (
+          {error.isAuthError && canReconnect && (
             <Button
               onClick={handleReauth}
               className="w-full gap-2"
@@ -73,7 +83,7 @@ export function ApiErrorModal() {
             </Button>
           )}
           <Button
-            variant={error.isAuthError ? "ghost" : "default"}
+            variant={error.isAuthError && canReconnect ? "ghost" : "default"}
             onClick={clearApiError}
             className="w-full"
             data-testid="api-error-dismiss-button"

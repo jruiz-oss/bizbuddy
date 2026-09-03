@@ -25,31 +25,34 @@ export function LocalUserProvider({ children }: { children: ReactNode }) {
   const [modalMode, setModalMode] = useState<ModalMode>('select');
   const [initialized, setInitialized] = useState(false);
 
-  // On mount: try to restore the saved user from localStorage
+  // On mount: ask the SERVER who is logged in. The server session (set by
+  // /api/local-users/:id/login) is the only thing that actually authorizes API
+  // calls, so it — not localStorage — decides whether we're signed in. Trusting
+  // localStorage meant a browser could render the app after its session had
+  // expired, then 401 on every request and look like a Google/auth outage.
+  // localStorage is still written, but only as a hint for which profile to
+  // pre-select in the picker.
   useEffect(() => {
-    const savedId = localStorage.getItem(STORAGE_KEY);
-    if (savedId) {
-      fetch(getApiUrl(`/api/local-users/${savedId}`), { credentials: "include" })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((user) => {
-          if (user) {
-            setSelectedLocalUserState(user);
-            setCurrentLocalUserId(user.id);
-            setShowSelectionModal(false);
-          } else {
-            localStorage.removeItem(STORAGE_KEY);
-            setShowSelectionModal(true);
-          }
-        })
-        .catch(() => {
-          localStorage.removeItem(STORAGE_KEY);
+    fetch(getApiUrl(`/api/auth/session`), { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const user = data?.localUser ?? null;
+        if (user) {
+          setSelectedLocalUserState(user);
+          setCurrentLocalUserId(user.id);
+          localStorage.setItem(STORAGE_KEY, user.id);
+          setShowSelectionModal(false);
+        } else {
+          // No server session — show the picker. Keep the saved id so the
+          // modal can highlight the profile this browser last used.
           setShowSelectionModal(true);
-        })
-        .finally(() => setInitialized(true));
-    } else {
-      setShowSelectionModal(true);
-      setInitialized(true);
-    }
+        }
+      })
+      .catch(() => {
+        // Network/server hiccup: don't pretend we're signed in.
+        setShowSelectionModal(true);
+      })
+      .finally(() => setInitialized(true));
   }, []);
 
   const setSelectedLocalUser = useCallback((user: LocalUser | null) => {
@@ -63,6 +66,11 @@ export function LocalUserProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Also end the SERVER session. Clearing client state alone used to leave the
+    // session cookie valid — now that we restore identity from the server on
+    // mount, that would silently sign you back in on the next refresh.
+    fetch(getApiUrl(`/api/auth/logout`), { method: "POST", credentials: "include" })
+      .catch(() => { /* best effort — still drop client state below */ });
     setSelectedLocalUser(null);
     setModalMode('select');
     setShowSelectionModal(true);
