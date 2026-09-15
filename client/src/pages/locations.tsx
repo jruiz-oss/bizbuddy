@@ -141,7 +141,7 @@ function FitBounds({
   // On first mount, force the map to mainland US (overrides any preserved
   // Leaflet state from a previous session/HMR).
   useEffect(() => {
-    map.fitBounds(US_BOUNDS, { padding: [10, 10], animate: false });
+    map.fitBounds(US_BOUNDS, { padding: [4, 4], animate: false });
   }, []);
   useEffect(() => {
     if (selectionIds.length >= 1) {
@@ -164,7 +164,7 @@ function FitBounds({
       }
     }
     // No selection and no focused pin → snap back to mainland US.
-    map.fitBounds(US_BOUNDS, { padding: [10, 10], animate: false });
+    map.fitBounds(US_BOUNDS, { padding: [4, 4], animate: false });
   }, [primaryId, selectionKey, fitNonce]);
   return null;
 }
@@ -982,6 +982,8 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
               <MapContainer
                 center={[39.5, -98.35]}
                 zoom={4}
+                zoomSnap={0.1}
+                zoomDelta={0.5}
                 scrollWheelZoom
                 className="h-full w-full"
                 data-testid="leaflet-map"
