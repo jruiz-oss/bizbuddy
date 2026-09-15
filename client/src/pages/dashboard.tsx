@@ -42,6 +42,24 @@ interface DashboardProps {
  * `lastEmailSentAt` while the server anchors strictly on `startDate`. Both now come from
  * shared/review-period.ts, so the preview and the scheduler cannot disagree.
  */
+const SOCIAL_FIELD_LABELS: Record<string, string> = {
+  social_twitter: "Twitter / X",
+  social_facebook: "Facebook",
+  social_instagram: "Instagram",
+  social_youtube: "YouTube",
+  social_linkedin: "LinkedIn",
+  social_tiktok: "TikTok",
+  social_pinterest: "Pinterest",
+};
+
+// "name" -> "Name", "social_facebook" -> "Facebook" — used wherever a
+// location_info_changed field key needs to read as a normal label.
+function formatChangedFieldLabel(field: string): string {
+  if (SOCIAL_FIELD_LABELS[field]) return SOCIAL_FIELD_LABELS[field];
+  const words = field.replace(/_/g, " ").split(" ");
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
 function computeNextEmailSend(group: any): Date | null {
   if (!group.isEnabled) return null;
   const nextMs = computeNextReviewEmailSendMs(group);
@@ -452,7 +470,7 @@ export default function Dashboard({
       .slice(0, 10)
       .forEach((entry) => {
         const changes = entry.payloadJson?.changes ?? [];
-        const fields = changes.map((c: any) => c.field.replace(/_/g, " ")).join(", ");
+        const fields = changes.map((c: any) => formatChangedFieldLabel(c.field)).join(", ");
         const loc = locations.find((l) => l.id === entry.clientLocationId);
         const locName = loc?.name ?? "A location";
         items.push({
@@ -1420,7 +1438,7 @@ export default function Dashboard({
                         <p className="text-xs font-semibold text-muted-foreground uppercase mb-2">What Changed</p>
                         {(selectedActivity.payloadJson?.changes ?? []).map((c: any, i: number) => (
                           <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1.5">
-                            <p className="text-xs font-semibold text-amber-800 capitalize">{c.field.replace(/_/g, " ")}</p>
+                            <p className="text-xs font-semibold text-amber-800">{formatChangedFieldLabel(c.field)}</p>
                             <p className="text-sm text-red-500 line-through break-words whitespace-pre-wrap">{c.old}</p>
                             <p className="text-sm text-green-700 font-medium break-words whitespace-pre-wrap">{c.new}</p>
                           </div>

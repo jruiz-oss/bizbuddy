@@ -20,6 +20,7 @@ import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
 import { validateGbpImage } from "./utils/image-dimensions";
+import { detectSocialMediaDrift } from "./utils/social-drift";
 
 // Resolve the acting local user from the SERVER session (set at login).
 // Never trust the client-supplied X-Local-User-Id header for authorization —
@@ -1608,11 +1609,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           // Detect changes to core info fields before overwriting
           const CORE_FIELDS = ["name", "phone", "address", "website", "description"] as const;
-          const infoChanges = CORE_FIELDS.flatMap((field) => {
+          const infoChanges: Array<{ field: string; old: string; new: string }> = CORE_FIELDS.flatMap((field) => {
             const oldVal = ((existingLocation as any)[field] ?? "").toString().trim();
             const newVal = (updateFields[field] ?? "").toString().trim();
             return oldVal && newVal && oldVal !== newVal ? [{ field, old: oldVal, new: newVal }] : [];
           });
+
+          // Also check for drift on social media links Google may have reverted or
+          // cleared, scoped to locations that have social links tracked locally.
+          const { changes: socialChanges, updatedSocialMedia } = await detectSocialMediaDrift(
+            googleOAuthAuth,
+            location.name,
+            existingLocation.socialMedia as Record<string, string> | null,
+          );
+          if (socialChanges.length > 0) {
+            infoChanges.push(...socialChanges);
+            updateFields.socialMedia = updatedSocialMedia;
+          }
+
           if (infoChanges.length > 0) {
             try {
               await storage.createActivityLog({
@@ -2159,13 +2173,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const gbpResult = await googleOAuthAuth.revertLocationInfoChanges(location.gbpLocationId, changes);
 
       // Update local DB with the old values for each field we successfully reverted
-      const localUpdates: Record<string, string> = {};
+      const localUpdates: Record<string, any> = {};
       for (const change of changes) {
         if (change.field === 'address') continue; // address can't be reverted via string
         if (['name', 'phone', 'website', 'description'].includes(change.field)) {
           localUpdates[change.field] = change.old;
         }
       }
+
+      // Social fields are reverted together (single Google Business Profile call), so
+      // only apply them locally if that push actually succeeded.
+      const socialChanges = changes.filter((c) => c.field.startsWith('social_'));
+      const socialPushFailed = (gbpResult.skippedFields ?? []).some((f: string) => f.startsWith('social_'));
+      if (socialChanges.length > 0 && !socialPushFailed) {
+        const existingSocialMedia = ((location.socialMedia as Record<string, string>) || {});
+        const revertedSocialMedia = { ...existingSocialMedia };
+        for (const change of socialChanges) {
+          const platform = change.field.slice('social_'.length);
+          if (change.old) {
+            revertedSocialMedia[platform] = change.old;
+          } else {
+            delete revertedSocialMedia[platform];
+          }
+        }
+        localUpdates.socialMedia = revertedSocialMedia;
+      }
+
       if (Object.keys(localUpdates).length > 0) {
         await storage.updateLocation(entry.clientLocationId!, localUpdates as any);
       }

@@ -888,7 +888,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
         {/* Body: Map + Side panel */}
         <div className="flex-1 flex overflow-hidden gap-3 p-3 bg-gray-50">
-          {/* Map (~70%) */}
+          {/* Map (~55%) */}
           <div className="relative flex-1 min-w-0 bg-gray-100 rounded-lg overflow-hidden border border-border/60 shadow-sm isolate">
             {pinnedLocations.length === 0 ? (
               <div className="absolute inset-0 flex items-center justify-center">
@@ -1098,8 +1098,8 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
             )}
           </div>
 
-          {/* Right pane (~30%) */}
-          <aside className="w-[360px] xl:w-[440px] 2xl:w-[560px] border border-border/60 flex flex-col bg-white overflow-hidden rounded-lg shadow-sm" data-testid="side-pane">
+          {/* Right pane (~45%) */}
+          <aside className="w-[480px] xl:w-[580px] 2xl:w-[740px] border border-border/60 flex flex-col bg-white overflow-hidden rounded-lg shadow-sm" data-testid="side-pane">
             {/* Location list header */}
             <div className="border-b border-border/60 px-4 py-3 flex items-center justify-between">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide" data-testid="text-nearby-header">

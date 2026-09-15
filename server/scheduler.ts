@@ -11,6 +11,7 @@ import { generateReviewsXlsx } from "./utils/review-xlsx-generator";
 import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref, generateLocationCopyHtml, generateReviewEmailHtml as generateReviewEmailHtmlTemplate } from "./utils/review-email-template";
 import { classifyReviewThemes } from "./utils/review-theme-classifier";
 import { classifyReviewCategories } from "./utils/review-category-classifier";
+import { detectSocialMediaDrift } from "./utils/social-drift";
 import fs from "fs";
 import path from "path";
 
@@ -641,11 +642,25 @@ export async function syncLocationsFromGoogle() {
     } else {
       // Detect changes to core info before overwriting
       const CORE_FIELDS = ["name", "phone", "address", "website", "description"] as const;
-      const infoChanges = CORE_FIELDS.flatMap((field) => {
+      const infoChanges: Array<{ field: string; old: string; new: string }> = CORE_FIELDS.flatMap((field) => {
         const oldVal = ((existing as any)[field] ?? "").toString().trim();
         const newVal = (updateFields[field] ?? "").toString().trim();
         return oldVal && newVal && oldVal !== newVal ? [{ field, old: oldVal, new: newVal }] : [];
       });
+
+      // Also check for drift on social media links Google may have reverted or
+      // cleared — same idea as the core fields above, scoped to locations that
+      // actually have social links tracked locally (see detectSocialMediaDrift).
+      const { changes: socialChanges, updatedSocialMedia } = await detectSocialMediaDrift(
+        googleOAuthAuth,
+        location.name,
+        existing.socialMedia as Record<string, string> | null,
+      );
+      if (socialChanges.length > 0) {
+        infoChanges.push(...socialChanges);
+        updateFields.socialMedia = updatedSocialMedia;
+      }
+
       if (infoChanges.length > 0) {
         try {
           await storage.createActivityLog({

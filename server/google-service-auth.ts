@@ -1,5 +1,19 @@
 import { google } from 'googleapis';
 
+// Google Business Profile "attributes" API names for each social platform we support.
+// Twitter/X may be exposed as either url_x (new) or url_twitter (legacy) depending on
+// the account, so we try both when reading and writing. Shared between
+// updateSocialMediaUrls (write) and getSocialMediaUrls (read) below.
+const SOCIAL_ATTRIBUTE_CANDIDATES: Record<string, string[]> = {
+  twitter: ['url_x', 'url_twitter'],
+  facebook: ['url_facebook'],
+  instagram: ['url_instagram'],
+  youtube: ['url_youtube'],
+  linkedin: ['url_linkedin'],
+  tiktok: ['url_tiktok'],
+  pinterest: ['url_pinterest'],
+};
+
 // OAuth Authentication - User login required
 class GoogleOAuthAuth {
   private oauth2Client: any;
@@ -866,10 +880,19 @@ class GoogleOAuthAuth {
     const updateFields: string[] = [];
     const requestBody: any = {};
     const skippedFields: string[] = [];
+    // social_<platform> fields (e.g. social_facebook) don't go through the locations.patch
+    // call above — they're attributes, reverted via updateSocialMediaUrls below.
+    const socialUpdates: Record<string, string> = {};
 
     for (const change of changes) {
       const oldValue = change.old;
       if (!oldValue) continue;
+
+      if (change.field.startsWith('social_')) {
+        const platform = change.field.slice('social_'.length);
+        socialUpdates[platform] = oldValue;
+        continue;
+      }
 
       switch (change.field) {
         case 'name':
@@ -898,8 +921,30 @@ class GoogleOAuthAuth {
       }
     }
 
+    let revertedSocialCount = 0;
+    if (Object.keys(socialUpdates).length > 0) {
+      try {
+        await this.updateSocialMediaUrls(locationName, socialUpdates as any);
+        revertedSocialCount = Object.keys(socialUpdates).length;
+        console.log(`↩️ Reverted ${revertedSocialCount} social media field(s) for: ${locationName}`);
+      } catch (err: any) {
+        console.error('❌ Error reverting social media URLs:', err);
+        skippedFields.push(...Object.keys(socialUpdates).map((platform) => `social_${platform}`));
+      }
+    }
+
     if (updateFields.length === 0) {
-      return { success: true, skipped: true, skippedFields, message: 'No revertible fields (address changes must be done manually)' };
+      if (revertedSocialCount === 0) {
+        return { success: true, skipped: true, skippedFields, message: 'No revertible fields (address changes must be done manually)' };
+      }
+      return {
+        success: true,
+        skippedFields,
+        socialMedia: socialUpdates,
+        message: skippedFields.length > 0
+          ? `Reverted ${revertedSocialCount} social field(s). Note: address changes must be fixed manually.`
+          : `Reverted ${revertedSocialCount} social field(s) successfully.`,
+      };
     }
 
     const updateMask = updateFields.join(',');
@@ -912,13 +957,15 @@ class GoogleOAuthAuth {
     });
 
     console.log('✅ Location info reverted successfully');
+    const revertedCount = updateFields.length + revertedSocialCount;
     return {
       success: true,
       data: response.data,
       skippedFields,
+      socialMedia: revertedSocialCount > 0 ? socialUpdates : undefined,
       message: skippedFields.length > 0
-        ? `Reverted ${updateFields.length} field(s). Note: address changes must be fixed manually.`
-        : `Reverted ${updateFields.length} field(s) successfully.`,
+        ? `Reverted ${revertedCount} field(s). Note: address changes must be fixed manually.`
+        : `Reverted ${revertedCount} field(s) successfully.`,
     };
   }
 
@@ -1114,6 +1161,43 @@ class GoogleOAuthAuth {
       }
       throw new Error(errorMessage);
     }
+  }
+
+  // Read the CURRENT social media URLs live on a location's Google Business Profile.
+  // Mirror of updateSocialMediaUrls (write side) — used to detect drift when Google
+  // (or a client editing directly on Google) reverts/clears a link BizBuddy previously
+  // set, so the activity log can flag it and offer a revert just like it does for
+  // name/phone/website/description.
+  async getSocialMediaUrls(locationName: string): Promise<Record<string, string>> {
+    if (!this.isAuthenticated()) {
+      throw new Error('User not authenticated. Please log in first.');
+    }
+
+    const response: any = await this.oauth2Client.request({
+      url: `https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}/attributes`,
+      method: 'GET',
+    });
+
+    const attributes = (response.data?.attributes || []) as any[];
+    const byAttributeId = new Map<string, any>();
+    for (const attr of attributes) {
+      const id: string = (attr.name || '').replace('attributes/', '');
+      byAttributeId.set(id, attr);
+    }
+
+    const result: Record<string, string> = {};
+    for (const [platform, candidates] of Object.entries(SOCIAL_ATTRIBUTE_CANDIDATES)) {
+      for (const candidate of candidates) {
+        const attr = byAttributeId.get(candidate);
+        const uri = attr?.uriValues?.[0]?.uri;
+        if (uri) {
+          result[platform] = uri;
+          break;
+        }
+      }
+    }
+
+    return result;
   }
 
   // Upload photos to a location  
