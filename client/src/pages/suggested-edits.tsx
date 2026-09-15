@@ -109,6 +109,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   const [selectedFolderIds, setSelectedFolderIds] = useState<string[]>([]);
   const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
   const [showScanOptions, setShowScanOptions] = useState(false);
+  const [locationFilterQuery, setLocationFilterQuery] = useState("");
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
 
   const { data: clients = [] } = useQuery<Client[]>({
@@ -377,6 +378,31 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   };
 
   const selectionCount = selectedFolderIds.length + selectedLocationIds.length;
+
+  // Every location the account has, not just the ones that happen to sit in a
+  // folder. Hidden locations are excluded because they're hidden everywhere
+  // else in the app and scanning them just wastes API calls. Sorted by name and
+  // searchable — an unsorted 200-item list is unusable for picking one-offs.
+  const selectableLocations = allLocations
+    .filter((loc) => !loc.hidden)
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  const filteredLocations = (() => {
+    const q = locationFilterQuery.trim().toLowerCase();
+    if (!q) return selectableLocations;
+    return selectableLocations.filter(
+      (loc) =>
+        (loc.name || "").toLowerCase().includes(q) ||
+        (loc.address || "").toLowerCase().includes(q) ||
+        (loc.city || "").toLowerCase().includes(q)
+    );
+  })();
+
+  const filteredFolders = (() => {
+    const q = locationFilterQuery.trim().toLowerCase();
+    if (!q) return folders;
+    return folders.filter((f) => (f.name || "").toLowerCase().includes(q));
+  })();
 
   // Helper function to check if an edit is pending (not yet acted on)
   const isEditPending = (gbpLocationName: string) => {
@@ -939,13 +965,23 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                           ? "Select items to scan specific locations, or use 'Scan All' to scan everything."
                           : `${selectionCount} item${selectionCount > 1 ? 's' : ''} selected`}
                       </p>
+                      <div className="relative mt-2">
+                        <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                        <Input
+                          value={locationFilterQuery}
+                          onChange={(e) => setLocationFilterQuery(e.target.value)}
+                          placeholder="Search locations or folders..."
+                          className="h-8 pl-8 text-sm"
+                          data-testid="input-location-filter-search"
+                        />
+                      </div>
                     </div>
-                    <ScrollArea className="h-[300px]">
-                      {folders.length > 0 && (
+                    <ScrollArea className="h-[340px]">
+                      {filteredFolders.length > 0 && (
                         <div className="p-3 border-b border-gray-100">
                           <h5 className="text-xs font-semibold text-gray-500 uppercase mb-2">Folders</h5>
                           <div className="space-y-2">
-                            {folders.map((folder) => (
+                            {filteredFolders.map((folder) => (
                               <label
                                 key={folder.id}
                                 className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1.5 rounded"
@@ -962,11 +998,13 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                           </div>
                         </div>
                       )}
-                      {allLocations.length > 0 && (
+                      {filteredLocations.length > 0 && (
                         <div className="p-3">
-                          <h5 className="text-xs font-semibold text-gray-500 uppercase mb-2">Individual Locations</h5>
+                          <h5 className="text-xs font-semibold text-gray-500 uppercase mb-2">
+                            All Locations ({filteredLocations.length})
+                          </h5>
                           <div className="space-y-2">
-                            {allLocations.map((loc) => (
+                            {filteredLocations.map((loc) => (
                               <label
                                 key={loc.id}
                                 className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1.5 rounded"
@@ -986,9 +1024,13 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                           </div>
                         </div>
                       )}
-                      {folders.length === 0 && allLocations.length === 0 && (
+                      {filteredFolders.length === 0 && filteredLocations.length === 0 && (
                         <div className="p-6 text-center text-gray-500">
-                          <p className="text-sm">No folders or locations available</p>
+                          <p className="text-sm">
+                            {locationFilterQuery.trim()
+                              ? `No matches for "${locationFilterQuery.trim()}"`
+                              : "No folders or locations available"}
+                          </p>
                         </div>
                       )}
                     </ScrollArea>

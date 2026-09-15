@@ -17,14 +17,14 @@ export function ScanProgressPill() {
 
   if (!scan) return null;
 
-  const onScanPage = location === "/suggested-edits";
+  // The Suggested Edits page has its own inline banner with the same progress
+  // and the same Stop button. Stacking the pill on top of it is pure noise, so
+  // the pill only exists for people who navigated away.
+  if (location === "/suggested-edits") return null;
 
   // Once a run is finished, show the outcome once and let the user dismiss it.
   // While it's running we always show it — that's the whole point.
   if (!isScanning && isPillDismissed) return null;
-
-  // A finished run whose results are already on screen needs no announcement.
-  if (!isScanning && onScanPage) return null;
 
   // Don't resurrect last week's scan on every page load. The outcome is only
   // worth surfacing while it's still news; after that the Suggested Edits page
@@ -114,18 +114,16 @@ export function ScanProgressPill() {
           </p>
 
           <div className="flex items-center gap-2 mt-2.5">
-            {!onScanPage && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-[11px] px-2.5"
-                onClick={() => navigate("/suggested-edits")}
-                data-testid="button-scan-pill-view"
-              >
-                View
-                <ArrowRight className="w-3 h-3 ml-1" />
-              </Button>
-            )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-[11px] px-2.5"
+              onClick={() => navigate("/suggested-edits")}
+              data-testid="button-scan-pill-view"
+            >
+              View
+              <ArrowRight className="w-3 h-3 ml-1" />
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -154,21 +152,19 @@ export function ScanProgressPill() {
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
-          {!onScanPage && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-[11px] px-2.5 mt-2.5 bg-white"
-              onClick={() => {
-                dismissPill();
-                navigate("/suggested-edits");
-              }}
-              data-testid="button-scan-pill-view-results"
-            >
-              View results
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-[11px] px-2.5 mt-2.5 bg-white"
+            onClick={() => {
+              dismissPill();
+              navigate("/suggested-edits");
+            }}
+            data-testid="button-scan-pill-view-results"
+          >
+            View results
+            <ArrowRight className="w-3 h-3 ml-1" />
+          </Button>
         </div>
       ) : null}
     </div>
