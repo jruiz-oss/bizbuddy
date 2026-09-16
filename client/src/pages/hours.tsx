@@ -640,35 +640,35 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                 </div>
               </CardHeader>
               <CardContent className="px-5 pb-5 pt-0">
-                <Tabs value={hoursType} onValueChange={(v) => setHoursType(v as any)} className="mb-6">
-                  <TabsList>
-                    <TabsTrigger value="regular" data-testid="tab-regular-hours">Regular Hours</TabsTrigger>
-                    <TabsTrigger value="special" data-testid="tab-special-hours">Special Hours</TabsTrigger>
+                <Tabs value={hoursType} onValueChange={(v) => setHoursType(v as any)} className="mb-4">
+                  <TabsList className="h-8 p-0.5">
+                    <TabsTrigger value="regular" className="text-xs h-7 px-3" data-testid="tab-regular-hours">Regular Hours</TabsTrigger>
+                    <TabsTrigger value="special" className="text-xs h-7 px-3" data-testid="tab-special-hours">Special Hours</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="regular">
-                    <div className="space-y-4">
+                    <div className="space-y-1.5">
                     {days.map(({ key, label }) => (
-                      <div key={key} className={`flex items-center justify-between py-3 px-4 border rounded-lg ${selectedDayForApply === key ? 'bg-cyan-50 border-cyan-300' : 'border-gray-200'}`}>
-                        <div className="w-32">
-                          <p className="font-medium text-gray-900 dark:text-gray-900">{label}</p>
+                      <div key={key} className={`flex items-center justify-between py-1.5 px-3 border rounded-lg ${selectedDayForApply === key ? 'bg-cyan-50 border-cyan-300' : 'border-gray-200'}`}>
+                        <div className="w-24">
+                          <p className="text-xs font-medium text-gray-900 dark:text-gray-900">{label}</p>
                         </div>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
                           {hours[key].isOpen ? (
                             <>
                               <Input
                                 type="time"
                                 value={hours[key].openTime}
                                 onChange={(e) => handleHourChange(key, 'openTime', e.target.value)}
-                                className="w-32"
+                                className="w-28 h-7 text-xs rounded-lg"
                                 data-testid={`input-${key}-open`}
                               />
-                              <span className="text-gray-600 dark:text-gray-400">–</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-400">–</span>
                               <Input
                                 type="time"
                                 value={hours[key].closeTime}
                                 onChange={(e) => handleHourChange(key, 'closeTime', e.target.value)}
-                                className="w-32"
+                                className="w-28 h-7 text-xs rounded-lg"
                                 data-testid={`input-${key}-close`}
                               />
                               <Button
@@ -676,18 +676,20 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                                 size="sm"
                                 onClick={() => handleHourChange(key, 'isOpen', false)}
                                 data-testid={`button-${key}-close`}
+                                className="h-7 px-2 text-xs"
                               >
                                 Mark Closed
                               </Button>
                             </>
                           ) : (
                             <>
-                              <span className="text-gray-600 dark:text-gray-400 font-mono">Closed</span>
+                              <span className="w-[248px] text-xs text-gray-500 dark:text-gray-400 font-mono">Closed</span>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => handleHourChange(key, 'isOpen', true)}
                                 data-testid={`button-${key}-open`}
+                                className="h-7 px-2 text-xs"
                               >
                                 Mark Open
                               </Button>
@@ -698,7 +700,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                             size="sm"
                             onClick={() => setSelectedDayForApply(selectedDayForApply === key ? null : key)}
                             data-testid={`button-select-${key}`}
-                            className={selectedDayForApply === key ? 'bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white border-0' : ''}
+                            className={`h-7 px-2.5 text-xs ${selectedDayForApply === key ? 'bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white border-0' : ''}`}
                           >
                             {selectedDayForApply === key ? 'Selected' : 'Select'}
                           </Button>
@@ -709,8 +711,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
 
                     {selectedDayForApply && (
                       <Button
-                        className="w-full mt-6 bg-gray-200 hover:bg-gray-300 text-gray-900 border border-gray-300"
-                        size="lg"
+                        className="w-full mt-4 h-9 text-xs bg-gray-200 hover:bg-gray-300 text-gray-900 border border-gray-300"
                         onClick={() => handleApplyToAllDays(selectedDayForApply)}
                         data-testid="button-apply-to-all-days"
                       >
@@ -719,8 +720,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                     )}
 
                       <Button
-                        className="w-full mt-6 bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white"
-                        size="lg"
+                        className="w-full mt-4 h-9 text-xs bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white"
                         onClick={handleUpdateHours}
                         disabled={updateHoursMutation.isPending || selectedLocations.size === 0}
                         data-testid="button-update-hours"
@@ -730,13 +730,13 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                   </TabsContent>
 
                   <TabsContent value="special">
-                    <div className="space-y-4">
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 pb-1">
                         Add special hours for holidays and events (e.g., Christmas, New Year's)
                       </p>
                       
                       {specialHours.map((period, index) => (
-                        <div key={index} className="flex items-center gap-3 p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                        <div key={index} className="flex items-center gap-2 py-1.5 px-3 border border-gray-200 dark:border-gray-700 rounded-lg">
                           <Input
                             type="date"
                             value={period.date}
@@ -745,7 +745,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                               newHours[index].date = e.target.value;
                               setSpecialHours(newHours);
                             }}
-                            className="w-48"
+                            className="w-40 h-7 text-xs rounded-lg"
                           />
                           {!period.isClosed ? (
                             <>
@@ -757,9 +757,9 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                                   newHours[index].openTime = e.target.value;
                                   setSpecialHours(newHours);
                                 }}
-                                className="w-32"
+                                className="w-28 h-7 text-xs rounded-lg"
                               />
-                              <span>–</span>
+                              <span className="text-xs text-gray-500">–</span>
                               <Input
                                 type="time"
                                 value={period.closeTime}
@@ -768,7 +768,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                                   newHours[index].closeTime = e.target.value;
                                   setSpecialHours(newHours);
                                 }}
-                                className="w-32"
+                                className="w-28 h-7 text-xs rounded-lg"
                               />
                               <Button
                                 variant="ghost"
@@ -778,13 +778,14 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                                   newHours[index].isClosed = true;
                                   setSpecialHours(newHours);
                                 }}
+                                className="h-7 px-2 text-xs"
                               >
                                 Mark Closed
                               </Button>
                             </>
                           ) : (
                             <>
-                              <span className="text-gray-600 dark:text-gray-400">Closed</span>
+                              <span className="text-xs text-gray-500 dark:text-gray-400">Closed</span>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -793,6 +794,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                                   newHours[index].isClosed = false;
                                   setSpecialHours(newHours);
                                 }}
+                                className="h-7 px-2 text-xs"
                               >
                                 Mark Open
                               </Button>
@@ -804,8 +806,9 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                             onClick={() => {
                               setSpecialHours(specialHours.filter((_, i) => i !== index));
                             }}
+                            className="h-7 w-7 p-0"
                           >
-                            <X className="w-4 h-4" />
+                            <X className="w-3.5 h-3.5" />
                           </Button>
                         </div>
                       ))}
@@ -815,15 +818,14 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
                         onClick={() => {
                           setSpecialHours([...specialHours, { date: '', openTime: '09:00', closeTime: '17:00', isClosed: false }]);
                         }}
-                        className="w-full"
+                        className="w-full h-8 text-xs mt-1"
                       >
-                        <Plus className="w-4 h-4 mr-2" />
+                        <Plus className="w-3.5 h-3.5 mr-1.5" />
                         Add Special Hours Period
                       </Button>
 
                       <Button
-                        className="w-full mt-6 bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white"
-                        size="lg"
+                        className="w-full mt-4 h-9 text-xs bg-[#02bdf2] hover:bg-[#02bdf2]/90 text-white"
                         onClick={() => {
                           if (selectedLocations.size === 0) {
                             toast({
