@@ -380,6 +380,15 @@ class GoogleOAuthAuth {
         console.log('🔄 The integration is working! You can increase quotas in Google Cloud Console');
         return [];
       }
+      // A dead shared refresh token surfaces here as invalid_grant. Swallowing it and
+      // returning [] made every caller (including the manual "Sync Locations" button)
+      // treat a broken connection identically to "you legitimately have zero accounts",
+      // so /api/sync/accounts reported false success in ~200ms instead of surfacing the
+      // reconnect prompt. Rethrow so callers' existing invalid_grant handling can run.
+      if (this.flagReauthIfInvalidGrant(error, 'getAccounts')) {
+        console.error('Error fetching accounts (invalid_grant, rethrowing):', error.message || error);
+        throw error;
+      }
       console.error('Error fetching accounts:', error.message || error);
       return [];
     }
