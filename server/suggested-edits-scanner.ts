@@ -439,15 +439,25 @@ async function checkLocation(
             computedFields.push(field);
           }
         }
-        if (computedFields.length === 0) return null;
-        diffMask = computedFields.join(",");
+        // Google told us hasGoogleUpdated=true for this location, but neither
+        // its own diffMask nor our own field comparison could pin down what
+        // changed (partial-response quirks, a field outside comparableFields,
+        // etc). That is a reason to fall back to a vague "metadata" flag, not
+        // a reason to hide the suggestion entirely — a silent drop here is
+        // exactly how a real Google-flagged edit (phone number, category)
+        // goes missing from the list.
+        diffMask = computedFields.length > 0 ? computedFields.join(",") : "metadata";
       }
 
       const finalFields = diffMask
         .split(",")
         .map((f: string) => f.trim())
         .filter((f: string) => f && f !== "metadata");
-      if (finalFields.length === 0) return null;
+      // Google already told us (checkResult.hasUpdates) this location has a
+      // pending suggestion. Never drop it just because we couldn't identify
+      // which field changed -- surface it as "metadata" so it still shows up
+      // for manual review instead of vanishing from the scan silently.
+      if (finalFields.length === 0 && !diffMask) diffMask = "metadata";
 
       return {
         locationId: location.id,
