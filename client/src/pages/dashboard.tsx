@@ -1331,9 +1331,9 @@ export default function Dashboard({
 
       {/* Activity Detail Dialog */}
       <Dialog open={!!selectedActivity} onOpenChange={() => setSelectedActivity(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl p-0 gap-0 overflow-hidden">
           {selectedActivity && (
-            <>
+            <div className="max-h-[80vh] overflow-y-auto p-6 flex flex-col gap-4">
               <DialogHeader>
                 <DialogTitle>{formatActivityAction(selectedActivity.action)}</DialogTitle>
                 <DialogDescription>
@@ -1658,7 +1658,7 @@ export default function Dashboard({
                   </div>
                 )}
               </div>
-            </>
+            </div>
           )}
         </DialogContent>
       </Dialog>

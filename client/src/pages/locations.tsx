@@ -1064,7 +1064,8 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
             {/* Floating selected-location card — overlaid on the map */}
             {(primaryLocation || selectedPinIds.size > 0) && (
-              <div className="absolute top-14 right-4 z-[500] w-[380px] max-h-[calc(100%-4.5rem)] overflow-y-auto bg-white rounded-xl shadow-xl border border-gray-200" data-testid="map-popup-card">
+              <div className="absolute top-14 right-4 z-[500] w-[380px] max-h-[calc(100%-4.5rem)] overflow-hidden rounded-xl bg-white shadow-xl border border-gray-200" data-testid="map-popup-card">
+                <div className="max-h-full overflow-y-auto">
                 {primaryLocation ? (
                 <SelectedCard
                   location={primaryLocation}
@@ -1096,6 +1097,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                 ) : (
                   <div className="p-5">{renderBulkActions()}</div>
                 )}
+                </div>
               </div>
             )}
           </div>
@@ -1131,10 +1133,13 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                   {nearby.map((p) => {
                     const calls = callCounts[p.id] ?? 0;
                     const checked = selectedPinIds.has(p.id);
+                    const isPrimary = primaryPinId === p.id;
                     return (
                       <li
                         key={p.id}
-                        className="px-4 py-2.5 flex items-center gap-3 hover:bg-gray-50"
+                        className={`px-4 py-2.5 flex items-center gap-3 border-l-2 ${
+                          isPrimary ? "bg-blue-50/70 border-l-[#001f3f]" : "border-l-transparent hover:bg-gray-50"
+                        }`}
                         data-testid={`nearby-item-${p.id}`}
                       >
                         <Checkbox
@@ -1144,7 +1149,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
                         />
                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: PIN_COLORS[p.status] }} />
                         <button
-                          className="flex-1 min-w-0 text-left"
+                          className="flex-1 min-w-0 text-left rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-[#001f3f]/40"
                           onClick={() => {
                             setPrimaryPinId(p.id);
                             setSelectedPinIds((prev) => new Set([...prev, p.id]));
