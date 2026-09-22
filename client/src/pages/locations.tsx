@@ -1064,8 +1064,8 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
 
             {/* Floating selected-location card — overlaid on the map */}
             {(primaryLocation || selectedPinIds.size > 0) && (
-              <div className="absolute top-14 right-4 z-[500] w-[380px] max-h-[calc(100%-4.5rem)] overflow-hidden rounded-xl bg-white shadow-xl border border-gray-200" data-testid="map-popup-card">
-                <div className="max-h-full overflow-y-auto">
+              <div className="absolute top-14 right-4 z-[500] w-[380px] max-h-[calc(100%-4.5rem)] flex flex-col overflow-hidden rounded-xl bg-white shadow-xl border border-gray-200" data-testid="map-popup-card">
+                <div className="min-h-0 overflow-y-auto">
                 {primaryLocation ? (
                 <SelectedCard
                   location={primaryLocation}
