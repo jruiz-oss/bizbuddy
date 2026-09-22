@@ -2398,6 +2398,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const daysParam = parseInt((req.query.days as string) || "30", 10);
       const days = Number.isFinite(daysParam) ? Math.max(1, Math.min(365, daysParam)) : 30;
       const compare = req.query.compare === "true";
+      // "calls" (default) sums callClicks; "views" sums impressions. Same
+      // table, same per-location grouping -- just a different column summed,
+      // so the Top Locations card can offer both without a second endpoint.
+      const metric = req.query.metric === "views" ? "views" : "calls";
+      const column =
+        metric === "views" ? locationPerformanceData.impressions : locationPerformanceData.callClicks;
 
       const endDate = new Date();
       endDate.setDate(endDate.getDate() - 1);
@@ -2410,7 +2416,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const rows = await db
           .select({
             locationId: locationPerformanceData.locationId,
-            callClicks: sql<number>`coalesce(sum(${locationPerformanceData.callClicks}), 0)`,
+            value: sql<number>`coalesce(sum(${column}), 0)`,
           })
           .from(locationPerformanceData)
           .innerJoin(clientLocations, eq(clientLocations.id, locationPerformanceData.locationId))
@@ -2424,14 +2430,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           )
           .groupBy(locationPerformanceData.locationId);
         const result: Record<string, number> = {};
-        for (const r of rows) result[r.locationId] = Number(r.callClicks) || 0;
+        for (const r of rows) result[r.locationId] = Number(r.value) || 0;
         return result;
       };
 
       const counts = await fetchCounts(startStr, endStr);
 
       if (!compare) {
-        return res.json({ counts, days });
+        return res.json({ counts, days, metric });
       }
 
       // Previous equivalent period (immediately before the current window)
@@ -2444,10 +2450,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const previous = await fetchCounts(prevStartStr, prevEndStr);
 
-      res.json({ counts, previous, days });
+      res.json({ counts, previous, days, metric });
     } catch (error) {
-      console.error("Error fetching bulk call counts:", error);
-      res.status(500).json({ error: "Failed to fetch call counts" });
+      console.error("Error fetching bulk call/view counts:", error);
+      res.status(500).json({ error: "Failed to fetch location counts" });
     }
   });
 

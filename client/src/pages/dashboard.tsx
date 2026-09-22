@@ -238,11 +238,29 @@ export default function Dashboard({
   // Map the top-bar period toggle to the days param sent to the performance API
   const perfDays = activityPeriod === "7d" ? 7 : activityPeriod === "90d" ? 90 : 30;
 
-  // Bulk call counts per location for the Top Locations leaderboard (with previous period for trend)
+  // Top Locations leaderboard metric -- "calls" or "views". Persisted per
+  // browser so switching it once sticks around on the next visit.
+  const [topLocationsMetric, setTopLocationsMetric] = useState<"calls" | "views">(() => {
+    try {
+      return (localStorage.getItem("topLocationsMetric") as "calls" | "views") || "calls";
+    } catch {
+      return "calls";
+    }
+  });
+  const setTopLocationsMetricPersisted = (metric: "calls" | "views") => {
+    setTopLocationsMetric(metric);
+    try {
+      localStorage.setItem("topLocationsMetric", metric);
+    } catch {
+      // best-effort only
+    }
+  };
+
+  // Bulk call/view counts per location for the Top Locations leaderboard (with previous period for trend)
   const { data: callCountsData } = useQuery<{ counts: Record<string, number>; previous?: Record<string, number>; days: number }>({
-    queryKey: ["/api/locations/call-counts", perfDays],
+    queryKey: ["/api/locations/call-counts", perfDays, topLocationsMetric],
     queryFn: async () => {
-      const r = await fetch(getApiUrl(`/api/locations/call-counts?days=${perfDays}&compare=true`), { credentials: "include" });
+      const r = await fetch(getApiUrl(`/api/locations/call-counts?days=${perfDays}&compare=true&metric=${topLocationsMetric}`), { credentials: "include" });
       if (!r.ok) throw new Error("Failed to fetch call counts");
       return r.json();
     },
@@ -507,7 +525,7 @@ export default function Dashboard({
     return (activityLog as any[]).slice(0, 4);
   }, [activityLog]);
 
-  // Top locations: ranked by real GBP call click counts for the selected period
+  // Top locations: ranked by real GBP call clicks or views (topLocationsMetric) for the selected period
   const topLocations = useMemo(() => {
     const counts = callCountsData?.counts ?? {};
     const previous = callCountsData?.previous ?? {};
@@ -1128,10 +1146,21 @@ export default function Dashboard({
               <CardHeader className="pb-3 pt-5 px-5">
                 <div className="flex items-center justify-between">
                   <h2 className="text-[15px] font-semibold text-gray-900">Top locations</h2>
-                  <button className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 transition-colors">
-                    By calls
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 transition-colors"
+                        data-testid="button-top-locations-metric"
+                      >
+                        By {topLocationsMetric === "views" ? "views" : "calls"}
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setTopLocationsMetricPersisted("calls")}>By calls</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setTopLocationsMetricPersisted("views")}>By views</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </CardHeader>
               <CardContent className="px-5 pb-5 pt-0 space-y-3">
