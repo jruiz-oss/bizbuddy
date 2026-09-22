@@ -793,21 +793,23 @@ export default function ActivityLog({ selectedClientId, setSelectedClientId }: A
 
       {/* ── Details modal ──────────────────────────────────────────── */}
       <Dialog open={!!openDetails} onOpenChange={(open) => !open && setOpenDetails(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-base flex items-center gap-2">
-              <span className={`w-7 h-7 rounded-full inline-flex items-center justify-center ${actionIconBg(openDetails ? actionTone(openDetails) : "neutral")}`}>
-                {openDetails && actionIcon(openDetails.action)}
-              </span>
-              {openDetails ? actionVerb(openDetails.action) : ""}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              {openDetails ? formatPhoenixDateTime(openDetails.timestamp) : ""}
-            </DialogDescription>
-          </DialogHeader>
-          {openDetails && (
-            <EventDetailBody entry={openDetails} locations={locations} />
-          )}
+        <DialogContent className="max-w-2xl p-0 gap-0 overflow-hidden">
+          <div className="max-h-[85vh] overflow-y-auto pt-6 pb-6 pl-6 pr-4 mr-10 flex flex-col gap-4">
+            <DialogHeader>
+              <DialogTitle className="text-base flex items-center gap-2">
+                <span className={`w-7 h-7 rounded-full inline-flex items-center justify-center ${actionIconBg(openDetails ? actionTone(openDetails) : "neutral")}`}>
+                  {openDetails && actionIcon(openDetails.action)}
+                </span>
+                {openDetails ? actionVerb(openDetails.action) : ""}
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {openDetails ? formatPhoenixDateTime(openDetails.timestamp) : ""}
+              </DialogDescription>
+            </DialogHeader>
+            {openDetails && (
+              <EventDetailBody entry={openDetails} locations={locations} />
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -999,7 +1001,7 @@ function EventDetailBody({
     <div className="space-y-4 text-sm">
       {/* Who / when / category */}
       <div className="grid grid-cols-2 gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
-        <DetailField label="Actor" value={entry.localUser?.name || "System"} sub={entry.localUser?.title || undefined} />
+        <DetailField label="User" value={entry.localUser?.name || "System"} sub={entry.localUser?.title || undefined} />
         <DetailField label="Category" value={categoryLabel(categoryFor(action))} />
         <DetailField label="When" value={formatPhoenixDateTime(entry.timestamp)} />
         <DetailField
