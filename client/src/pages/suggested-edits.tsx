@@ -915,6 +915,17 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
     return grouped;
   };
 
+  // Locations that actually have something clickable in a tab -- excludes
+  // entries whose only flagged field is non-actionable (metadata, latlng) or
+  // unrecognised, which never render anywhere. This is what the "Pending
+  // Google Updates" badge counts, so it can't get stuck showing a number the
+  // tabs below have no way to work down to zero.
+  const actionableLocationIds = new Set<string>();
+  for (const items of Object.values(groupResultsByCategory(scanResults))) {
+    for (const { result } of items) actionableLocationIds.add(result.locationId);
+  }
+  const actionableCount = actionableLocationIds.size;
+
   return (
     <div className="min-h-screen bg-background flex">
       <SideNav />
@@ -1105,9 +1116,9 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                     <Lightbulb className="w-4 h-4 text-amber-400" />
                     Pending Google Updates
                   </h2>
-                  {scanResults.length > 0 && (
+                  {actionableCount > 0 && (
                     <span className="bg-amber-100 text-amber-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">
-                      {scanResults.length}
+                      {actionableCount}
                     </span>
                   )}
                 </div>
