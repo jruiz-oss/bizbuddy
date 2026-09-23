@@ -239,7 +239,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
               const remainingFields = r.diffMask
                 .split(',')
                 .map(f => f.trim())
-                .filter(f => f !== selectedField && f !== 'metadata')
+                .filter(f => f !== selectedField)
                 .join(',');
               
               // If no fields left, remove the location
@@ -292,7 +292,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
               const remainingFields = r.diffMask
                 .split(',')
                 .map(f => f.trim())
-                .filter(f => f !== selectedField && f !== 'metadata')
+                .filter(f => f !== selectedField)
                 .join(',');
               
               // If no fields left, remove the location
@@ -468,7 +468,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
           const remainingFields = r.diffMask
             .split(',')
             .map(f => f.trim())
-            .filter(f => !acceptedFields.includes(f) && f !== 'metadata')
+            .filter(f => !acceptedFields.includes(f))
             .join(',');
           
           if (!remainingFields || remainingFields.trim() === '') {
@@ -853,6 +853,14 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       icon: '✨',
       fields: ['attributes', 'labels']
     },
+    {
+      id: 'other',
+      label: 'Other Updates',
+      icon: '🔔',
+      // Synthetic flag set when Google says a location changed but we
+      // couldn't pin down which field — see checkLocation() fallback.
+      fields: ['metadata']
+    },
   ];
 
   // Categorize a field based on the editCategories. Returns null if no category matches.
@@ -884,13 +892,20 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
     }
 
     for (const result of results) {
-      const NON_ACTIONABLE = new Set(['latlng', 'plusCode', 'plus_code', 'metadata']);
+      // Purely technical/non-actionable fields like GPS coordinates — genuinely
+      // nothing to show a user for these. 'metadata' is NOT in this set: it's
+      // Google saying "something changed" without telling us what, and it needs
+      // to surface (as the 'other' category) rather than vanish — see
+      // checkLocation()'s fallback in suggested-edits-scanner.ts.
+      const NON_ACTIONABLE = new Set(['latlng', 'plusCode', 'plus_code']);
       const rawFields = (result.diffMask || '').split(",").map(f => f.trim()).filter(Boolean);
 
-      // Only keep fields that have an actual suggested value — same check as the render filter
-      // Also skip purely technical/non-actionable fields like GPS coordinates
+      // Only keep fields that have an actual suggested value — same check as the render filter.
+      // 'metadata' has no corresponding value on suggestedLocation (it's a flag, not a field),
+      // so it's always kept rather than checked.
       const validFields = rawFields.filter(field => {
         if (NON_ACTIONABLE.has(field)) return false;
+        if (field === 'metadata') return true;
         const sv = getNestedValue(result.suggestedLocation, field);
         return sv !== null && sv !== undefined;
       });
@@ -1256,27 +1271,34 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                                   {isAcceptingAll ? (
                                     <>
                                       <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                                      Accepting...
+                                      {category.id === 'other' ? "Dismissing..." : "Accepting..."}
                                     </>
                                   ) : (
                                     <>
                                       <Check className="w-4 h-4 mr-1" />
-                                      Accept All ({categoryItems.reduce((acc, item) => acc + item.fields.length, 0)})
+                                      {category.id === 'other'
+                                        ? `Dismiss All (${categoryItems.reduce((acc, item) => acc + item.fields.length, 0)})`
+                                        : `Accept All (${categoryItems.reduce((acc, item) => acc + item.fields.length, 0)})`}
                                     </>
                                   )}
                                 </Button>
                               </div>
                               {categoryItems.map(({ result, fields }) => 
                                 fields.filter((field) => {
-                                  // Skip fields where Google has no actual suggested value — these are
-                                  // false positives where the field appears in the diffMask but Google
-                                  // didn't return a replacement value (it's not suggesting a change).
+                                  // 'metadata' is a synthetic flag with no value on suggestedLocation —
+                                  // always show it. Everything else: skip fields where Google has no
+                                  // actual suggested value (the field appears in the diffMask but Google
+                                  // didn't return a replacement value, so it's not suggesting a change).
+                                  if (field === 'metadata') return true;
                                   const sv = getNestedValue(result.suggestedLocation, field);
                                   return sv !== null && sv !== undefined;
                                 }).map((field) => {
+                                  const isMetadata = field === 'metadata';
                                   const suggestedValue = getNestedValue(result.suggestedLocation, field);
                                   const originalValue = getNestedValue(result.originalLocation, field);
-                                  const displayValue = getFieldPreview(field, suggestedValue);
+                                  const displayValue = isMetadata
+                                    ? "Google flagged a change here but didn't say what changed. Check this listing directly in Google Business Profile, then dismiss."
+                                    : getFieldPreview(field, suggestedValue);
                                   
                                   return (
                                     <div
@@ -1301,10 +1323,14 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                                           
                                           <div className="bg-gray-50 dark:bg-gray-700/30 rounded p-3">
                                             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">{getFieldLabel(field)}</p>
-                                            <p className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer hover:underline" 
-                                               onClick={() => setViewingField({ locationId: result.locationId, fieldName: field, originalValue, suggestedValue })}>
-                                              {displayValue}
-                                            </p>
+                                            {isMetadata ? (
+                                              <p className="text-sm text-gray-700 dark:text-gray-300">{displayValue}</p>
+                                            ) : (
+                                              <p className="text-sm text-gray-700 dark:text-gray-300 cursor-pointer hover:underline" 
+                                                 onClick={() => setViewingField({ locationId: result.locationId, fieldName: field, originalValue, suggestedValue })}>
+                                                {displayValue}
+                                              </p>
+                                            )}
                                           </div>
                                         </div>
 
@@ -1319,8 +1345,9 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                                             data-testid={`button-reject-${result.locationId}-${field}`}
                                           >
                                             <X className="w-4 h-4 mr-1" />
-                                            Reject
+                                            {isMetadata ? "Dismiss" : "Reject"}
                                           </Button>
+                                          {!isMetadata && (
                                           <Button
                                             size="sm"
                                             onClick={() => handleAction(result, field, "accept")}
@@ -1331,6 +1358,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                                             <Check className="w-4 h-4 mr-1" />
                                             Accept
                                           </Button>
+                                          )}
                                         </div>
                                       </div>
                                     </div>

@@ -197,10 +197,15 @@ export async function removeResolvedFieldFromScans(gbpLocationName: string, fiel
       acc.push(result);
       return acc;
     }
+    // Only drop the field actually being resolved. 'metadata' used to be
+    // stripped here unconditionally, which meant resolving any OTHER field on
+    // a location silently wiped its separate "Google flagged something we
+    // couldn't identify" marker too -- exactly the kind of silent drop this
+    // scanner is supposed to avoid (see the Sep 2026 false-negatives fix).
     const remaining = (result.diffMask || "")
       .split(",")
       .map((f) => f.trim())
-      .filter((f) => f && f !== field && f !== "metadata");
+      .filter((f) => f && f !== field);
 
     changed = true;
     if (remaining.length === 0) return acc; // nothing left to act on
