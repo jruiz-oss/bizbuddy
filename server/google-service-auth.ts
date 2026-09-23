@@ -1503,11 +1503,17 @@ class GoogleOAuthAuth {
       
       const currentLocation = await this.getLocation(locationName);
       
-      // Filter out read-only fields like 'metadata' from the updateMask
+      // Filter out read-only fields like 'metadata' from the updateMask.
+      // Categories are also excluded: rejecting means "keep what's already on the
+      // profile", so there's nothing to write back for categories -- and Google's
+      // API re-validates the ENTIRE category set on any categories write, which
+      // fails with INVALID_CATEGORY if the profile has a stale/deprecated category
+      // already assigned (even though we wouldn't be changing it).
       const readOnlyFields = ['metadata', 'name'];
+      const isCategoryField = (f: string) => f === 'categories' || f.startsWith('categories.');
       const updateableFields = diffMask.split(',')
         .map(f => f.trim())
-        .filter(f => !readOnlyFields.includes(f) && f.length > 0)
+        .filter(f => !readOnlyFields.includes(f) && !isCategoryField(f) && f.length > 0)
         .join(',');
       
       if (!updateableFields) {
