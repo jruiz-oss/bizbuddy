@@ -1,6 +1,6 @@
 import { SideNav } from "@/components/SideNav";
 import { useState, useEffect, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useIsMutating, useMutationState } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
@@ -18,7 +18,7 @@ import {
   Search, MapPin, Phone, Star, Folder, FolderPlus, FolderMinus, Loader2,
   EyeOff, Eye, RefreshCw, Pencil, ExternalLink, AlertTriangle,
   Map as MapIcon, Table as TableIcon, Columns as ColumnsIcon, LayoutGrid,
-  Download, SlidersHorizontal, Maximize2, Clock, MessageSquarePlus, ImagePlus, Tag as TagIcon, CheckSquare, X,
+  Download, SlidersHorizontal, Maximize2, Clock, MessageSquarePlus, ImagePlus, Tag as TagIcon, CheckSquare, X, CheckCircle2, AlertCircle
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -45,6 +45,8 @@ interface LocationsProps {
 }
 
 type PinStatus = "verified" | "edit_pending" | "needs_reauth" | "suspended" | "temp_closed";
+
+const LOCATION_SYNC_KEY = ["location-sync"] as const;
 
 const PIN_COLORS: Record<PinStatus, string> = {
   verified: "#16a34a",       // green
@@ -290,6 +292,10 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   // Auto-sync once on mount — surfaces fresh lat/lng + pending edits + accountState
   useEffect(() => {
     if (selectedClientId && !hasAutoSynced) {
+      if (queryClient.isMutating({ mutationKey: LOCATION_SYNC_KEY }) > 0) {
+        setHasAutoSynced(true);
+        return;
+      }
       (async () => {
         try {
           const r = await fetch(getApiUrl("/api/sync/accounts"), { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include" });
@@ -312,7 +318,12 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   }, [selectedClientId]);
 
   // ───────── Mutations ─────────
+  // Keyed + long gcTime so the in-flight/finished state lives in the global
+  // mutation cache, not this component. Leaving the tab and coming back still
+  // shows the spinner (or the finished result).
   const syncMutation = useMutation({
+    mutationKey: LOCATION_SYNC_KEY,
+    gcTime: 30 * 60 * 1000,
     mutationFn: async () => apiRequest("POST", "/api/sync/accounts", {}),
     onSuccess: () => {
       queryClientInstance.invalidateQueries({ queryKey: ["/api/locations/all"] });
@@ -324,6 +335,23 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
       showApiError("Sync Failed", parseApiError(error, "Could not sync locations from Google."), { isAuthError: isGoogleAuthError(error) });
     },
   });
+
+  const isSyncing = useIsMutating({ mutationKey: LOCATION_SYNC_KEY }) > 0;
+  const lastSync = useMutationState({
+    filters: { mutationKey: LOCATION_SYNC_KEY },
+    select: (m) => ({ status: m.state.status, at: m.state.submittedAt }),
+  }).at(-1);
+  // Re-render every 30s so "Synced Xm ago" stays current
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!lastSync || lastSync.status === "pending") return;
+    const t = setInterval(() => setNowTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [lastSync?.status, lastSync?.at]);
+  const syncedAgo = (at: number) => {
+    const mins = Math.floor((Date.now() - at) / 60_000);
+    return mins < 1 ? "just now" : `${mins}m ago`;
+  };
 
   const updateDetailsMutation = useMutation<unknown, unknown, { locationId: string; data: LocationDetailsPayload }>({
     mutationFn: async ({ locationId, data }) => {
@@ -724,22 +752,32 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
               <Button
                 size="sm"
                 onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending}
+                disabled={isSyncing}
                 data-testid="button-add-location"
               >
-                {syncMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MapPin className="w-4 h-4 mr-2" />}
+                {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MapPin className="w-4 h-4 mr-2" />}
                 + Add location
               </Button>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending}
+                disabled={isSyncing}
                 data-testid="button-sync-locations"
               >
-                {syncMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                {syncMutation.isPending ? "Syncing..." : "Sync from Google"}
+                {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                {isSyncing ? "Syncing..." : "Sync from Google"}
               </Button>
+              {!isSyncing && lastSync?.status === "success" && (
+                <span className="flex items-center text-xs text-green-600" data-testid="text-sync-done">
+                  <CheckCircle2 className="w-4 h-4 mr-1" /> Synced {syncedAgo(lastSync.at)}
+                </span>
+              )}
+              {!isSyncing && lastSync?.status === "error" && (
+                <span className="flex items-center text-xs text-red-600" data-testid="text-sync-failed">
+                  <AlertCircle className="w-4 h-4 mr-1" /> Last sync failed
+                </span>
+              )}
               <Button variant="outline" size="sm" onClick={() => setShowFolderManagementModal(true)} data-testid="button-manage-folders">
                 <FolderPlus className="w-4 h-4 mr-2" /> Folders
               </Button>
