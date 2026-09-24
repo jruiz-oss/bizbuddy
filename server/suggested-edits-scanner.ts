@@ -383,6 +383,20 @@ function stripNonActionable(obj: any) {
   return copy;
 }
 
+// Mirrors the client's getNestedValue in suggested-edits.tsx -- needed here so
+// checkLocation() can tell whether a named diffMask field actually resolves to
+// something before counting the location as an actionable suggestion.
+function getNestedValue(obj: any, path: string): any {
+  if (!obj) return undefined;
+  const parts = path.split(".");
+  let current = obj;
+  for (const part of parts) {
+    if (current === undefined || current === null) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
 async function checkLocation(
   location: typeof clientLocations.$inferSelect,
   googleOAuthAuth: any,
@@ -463,6 +477,23 @@ async function checkLocation(
       // which field changed -- surface it as "metadata" so it still shows up
       // for manual review instead of vanishing from the scan silently.
       if (finalFields.length === 0 && !diffMask) diffMask = "metadata";
+
+      // A named field is only useful if we actually have a value to show for
+      // it. Google's diffMask (or our own comparableFields guess) can name a
+      // field that the partial getGoogleUpdatedLocation response doesn't
+      // actually include -- suggestedLoc[field] comes back undefined. That's
+      // exactly the gap between "server counted this as a suggestion" and
+      // "the UI has nothing to render", which shows up as the scan banner
+      // claiming N locations need review while the list underneath is empty.
+      // Collapse it to the same "metadata" fallback used above, since a vague
+      // flag that renders beats a specific field name that doesn't.
+      const namedFields = diffMask
+        .split(",")
+        .map((f: string) => f.trim())
+        .filter((f: string) => f && f !== "metadata");
+      if (namedFields.length > 0 && !namedFields.some((f) => getNestedValue(suggestedLoc, f) !== null && getNestedValue(suggestedLoc, f) !== undefined)) {
+        diffMask = "metadata";
+      }
 
       return {
         locationId: location.id,
