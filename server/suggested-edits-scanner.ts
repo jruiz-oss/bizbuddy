@@ -458,42 +458,25 @@ async function checkLocation(
             computedFields.push(field);
           }
         }
-        // Google told us hasGoogleUpdated=true for this location, but neither
-        // its own diffMask nor our own field comparison could pin down what
-        // changed (partial-response quirks, a field outside comparableFields,
-        // etc). That is a reason to fall back to a vague "metadata" flag, not
-        // a reason to hide the suggestion entirely — a silent drop here is
-        // exactly how a real Google-flagged edit (phone number, category)
-        // goes missing from the list.
-        diffMask = computedFields.length > 0 ? computedFields.join(",") : "metadata";
+        diffMask = computedFields.join(",");
       }
 
-      const finalFields = diffMask
-        .split(",")
-        .map((f: string) => f.trim())
-        .filter((f: string) => f && f !== "metadata");
-      // Google already told us (checkResult.hasUpdates) this location has a
-      // pending suggestion. Never drop it just because we couldn't identify
-      // which field changed -- surface it as "metadata" so it still shows up
-      // for manual review instead of vanishing from the scan silently.
-      if (finalFields.length === 0 && !diffMask) diffMask = "metadata";
-
-      // A named field is only useful if we actually have a value to show for
-      // it. Google's diffMask (or our own comparableFields guess) can name a
-      // field that the partial getGoogleUpdatedLocation response doesn't
-      // actually include -- suggestedLoc[field] comes back undefined. That's
-      // exactly the gap between "server counted this as a suggestion" and
-      // "the UI has nothing to render", which shows up as the scan banner
-      // claiming N locations need review while the list underneath is empty.
-      // Collapse it to the same "metadata" fallback used above, since a vague
-      // flag that renders beats a specific field name that doesn't.
+      // Only keep fields we can both name AND show a real value for --
+      // "Google flagged something but we can't tell what" is not something
+      // Jorge wants surfaced (per his call 9/24/26): no "Other Updates"
+      // catch-all, just drop it and let him find it in GBP directly if it
+      // matters. A field with no resolvable value in the partial
+      // getGoogleUpdatedLocation response is exactly as useless as no field
+      // name at all, so both cases end up skipped the same way below.
       const namedFields = diffMask
         .split(",")
         .map((f: string) => f.trim())
         .filter((f: string) => f && f !== "metadata");
-      if (namedFields.length > 0 && !namedFields.some((f) => getNestedValue(suggestedLoc, f) !== null && getNestedValue(suggestedLoc, f) !== undefined)) {
-        diffMask = "metadata";
-      }
+      const renderableFields = namedFields.filter(
+        (f) => getNestedValue(suggestedLoc, f) !== null && getNestedValue(suggestedLoc, f) !== undefined,
+      );
+      if (renderableFields.length === 0) return null;
+      diffMask = renderableFields.join(",");
 
       return {
         locationId: location.id,
@@ -506,17 +489,11 @@ async function checkLocation(
         diffMask,
       };
     } catch (error) {
+      // Couldn't even fetch what Google flagged -- an API/network failure,
+      // not "there's an update we can't identify". Counts as an error, not a
+      // phantom suggestion.
       console.error(`Error fetching updates for ${locationName}:`, error);
-      return {
-        locationId: location.id,
-        locationName: location.name,
-        locationAddress: location.address,
-        gbpLocationName: locationName,
-        hasUpdates: true,
-        originalLocation: checkResult.location || {},
-        suggestedLocation: {},
-        diffMask: "metadata",
-      };
+      return { __error: true, message: error instanceof Error ? error.message : String(error) };
     }
   } catch (error: any) {
     const message = error?.message || String(error);
