@@ -57,10 +57,11 @@ const sections: NavSection[] = [
     items: [
       { href: "/jobs", icon: History, label: "Activity" },
       { href: "/settings", icon: Settings, label: "Settings" },
-      { href: "/docs", icon: BookOpen, label: "Help & Docs" },
     ],
   },
 ];
+
+const helpItem: NavItem = { href: "/docs", icon: BookOpen, label: "Help & Docs" };
 
 export function SideNav() {
   const [location] = useLocation();
@@ -137,7 +138,6 @@ export function SideNav() {
                 {visibleItems.map((item) => {
                   const isActive =
                     location === item.href ||
-                    (item.href === "/docs" && location.startsWith("/docs")) ||
                     (item.href === "/dashboard" && (location === "/" || location === "/analytics"));
                   const count = item.countKey ? counts[item.countKey] : undefined;
                   const showSpinner = item.countKey === "edits" && isScanning;
@@ -184,6 +184,22 @@ export function SideNav() {
           );
         })}
       </nav>
+
+      <div className="px-3 py-3 border-t border-gray-200">
+        <Link href={helpItem.href}>
+          <div
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+              location.startsWith("/docs") ? "bg-[#001f3f] text-white" : "text-gray-700 hover:bg-gray-50"
+            }`}
+            data-testid="nav-help-&-docs"
+          >
+            <helpItem.icon
+              className={`w-[18px] h-[18px] ${location.startsWith("/docs") ? "text-white" : "text-gray-500"}`}
+            />
+            <span className="text-[14px] font-medium flex-1 truncate">{helpItem.label}</span>
+          </div>
+        </Link>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ExternalLink, CheckCircle } from "lucide-react";
 import { getApiUrl } from "@/lib/queryClient";
+import { WanderingCan } from "@/components/wandering-can";
 const redbullIcon = "/redbullicon.png";
 
 export default function Login() {
@@ -48,23 +49,8 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4 relative">
-      {/* Easter Egg - Red Bull Can */}
-      <div className="fixed bottom-3 right-3 group cursor-pointer" data-testid="easter-egg-redbull">
-        <div className="relative">
-          <img 
-            src={redbullIcon} 
-            alt="" 
-            className="w-11 h-11 object-contain opacity-60 group-hover:opacity-100 transition-opacity"
-          />
-          {/* Tooltip */}
-          <div className="absolute bottom-full right-0 mb-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none">
-            <div className="bg-gray-900 dark:bg-gray-800 text-white text-[10px] rounded py-1.5 px-2.5 shadow-lg border border-gray-700 text-center">
-              <div>Created By Jorgey Porgie</div>
-              <div className="absolute top-full right-6 w-0 h-0 border-l-[3px] border-r-[3px] border-t-[3px] border-transparent border-t-gray-900 dark:border-t-gray-800"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Easter Egg - Red Bull Can walks the screen edges */}
+      <WanderingCan src={redbullIcon} />
       <Card className="w-full max-w-md">
         <CardHeader className="text-center pb-2">
           <div className="flex justify-center mb-2">

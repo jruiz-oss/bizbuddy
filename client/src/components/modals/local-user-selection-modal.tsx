@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { WanderingCan } from "@/components/wandering-can";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -61,7 +62,6 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const [newRole, setNewRole] = useState<string>("admin");
   const [isUploading, setIsUploading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [canPopped, setCanPopped] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetForm = () => {
@@ -888,28 +888,8 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           Commit Agency &middot; Internal use only
         </p>
 
-        {/* Easter egg: hover for a note, click to pop the can */}
-        <button
-          type="button"
-          onClick={() => { setCanPopped(true); setTimeout(() => setCanPopped(false), 900); }}
-          className="fixed bottom-3 right-3 group cursor-pointer bg-transparent border-0 p-0"
-          aria-label=""
-          data-testid="easter-egg-redbull"
-        >
-          <div className="relative">
-            <img
-              src="/redbullicon.png"
-              alt=""
-              className={`w-11 h-11 object-contain opacity-50 group-hover:opacity-100 transition-all duration-200 ${canPopped ? "rotate-[360deg] scale-125 opacity-100" : ""}`}
-              style={{ transitionDuration: canPopped ? "700ms" : undefined }}
-            />
-            <div className="absolute bottom-full right-0 mb-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
-              <div className="bg-gray-900 text-white text-[10px] rounded py-1.5 px-2.5 shadow-lg border border-gray-700 text-center">
-                {canPopped ? "psssht! gives you wings" : "Created By Jorgey Porgie"}
-              </div>
-            </div>
-          </div>
-        </button>
+        {/* Easter egg: can walks the screen edges; hover for a note, click to pop it */}
+        <WanderingCan />
       </div>
     );
   }
