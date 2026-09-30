@@ -929,9 +929,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: user.email,
         timezone: user.timezone || "America/Phoenix",
         notificationEmail: user.notificationEmail || user.email,
-        notifyOnJobCompletion: user.notifyOnJobCompletion !== false,
         notifyOnErrors: user.notifyOnErrors !== false,
-        notifyWeeklyReport: user.notifyWeeklyReport === true,
         lastLocationSyncAt: lastSync ? lastSync.toISOString() : null,
         nextLocationSyncAt: nextSync.toISOString(),
       });
@@ -959,9 +957,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: z.string().email().optional(),
         timezone: z.string().optional(),
         notificationEmail: z.string().email().optional(),
-        notifyOnJobCompletion: z.boolean().optional(),
         notifyOnErrors: z.boolean().optional(),
-        notifyWeeklyReport: z.boolean().optional(),
       });
 
       const validatedData = settingsSchema.parse(req.body);
@@ -978,9 +974,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: validatedData.email,
         timezone: validatedData.timezone,
         notificationEmail: validatedData.notificationEmail,
-        notifyOnJobCompletion: validatedData.notifyOnJobCompletion,
         notifyOnErrors: validatedData.notifyOnErrors,
-        notifyWeeklyReport: validatedData.notifyWeeklyReport,
       });
 
       res.json({
@@ -988,9 +982,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: updatedUser.email,
         timezone: updatedUser.timezone || "America/Phoenix",
         notificationEmail: updatedUser.notificationEmail || updatedUser.email,
-        notifyOnJobCompletion: updatedUser.notifyOnJobCompletion !== false,
         notifyOnErrors: updatedUser.notifyOnErrors !== false,
-        notifyWeeklyReport: updatedUser.notifyWeeklyReport === true,
       });
     } catch (error) {
       console.error('Error updating user settings:', error);

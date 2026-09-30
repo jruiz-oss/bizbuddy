@@ -20,6 +20,7 @@ import Settings from "@/pages/settings";
 import Login from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import AppleMaps from "@/pages/apple-maps";
+import Docs from "@/pages/docs";
 import { JobProgressProvider, useJobProgressContext } from "@/contexts/job-progress-context";
 import { JobProgressToast } from "@/components/job-progress-toast";
 import { ScanProgressProvider } from "@/contexts/scan-progress-context";
@@ -120,6 +121,8 @@ function AuthenticatedApp({ selectedClientId, setSelectedClientId }: RouterProps
         <Route path="/suggested-edits" component={() => <SuggestedEdits selectedClientId={selectedClientId} setSelectedClientId={setSelectedClientId} />} />
         <Route path="/jobs" component={() => <Jobs selectedClientId={selectedClientId} setSelectedClientId={setSelectedClientId} />} />
         <Route path="/settings" component={() => <Settings selectedClientId={selectedClientId} setSelectedClientId={setSelectedClientId} />} />
+        <Route path="/docs" component={Docs} />
+        <Route path="/docs/:slug" component={Docs} />
         <Route path="/apple-maps" component={() => <AppleMaps />} />
         <Route component={NotFound} />
       </Switch>

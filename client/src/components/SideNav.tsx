@@ -13,6 +13,7 @@ import {
   History,
   Settings,
   Loader2,
+  BookOpen,
 } from "lucide-react";
 import logoPath from "@/assets/bizbuddy-logo.png";
 import { useScanProgress } from "@/contexts/scan-progress-context";
@@ -56,6 +57,7 @@ const sections: NavSection[] = [
     items: [
       { href: "/jobs", icon: History, label: "Activity" },
       { href: "/settings", icon: Settings, label: "Settings" },
+      { href: "/docs", icon: BookOpen, label: "Help & Docs" },
     ],
   },
 ];
@@ -135,6 +137,7 @@ export function SideNav() {
                 {visibleItems.map((item) => {
                   const isActive =
                     location === item.href ||
+                    (item.href === "/docs" && location.startsWith("/docs")) ||
                     (item.href === "/dashboard" && (location === "/" || location === "/analytics"));
                   const count = item.countKey ? counts[item.countKey] : undefined;
                   const showSpinner = item.countKey === "edits" && isScanning;

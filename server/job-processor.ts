@@ -2,6 +2,7 @@
 import { storage } from "./storage";
 import type { Job, JobItem } from "@shared/schema";
 import { EventEmitter } from "events";
+import { notifyJobErrors } from "./job-failure-email";
 
 // Progress event emitter for real-time updates
 export const progressEmitter = new EventEmitter();
@@ -144,6 +145,7 @@ export async function processJob(jobId: string, options: JobProcessorOptions = d
     emitProgress(jobId, finalJob!, successCount, errorCount, totalProcessed);
     
     console.log(`Job ${jobId} completed with status: ${finalStatus}`);
+    void notifyJobErrors(jobId);
     
   } catch (error) {
     console.error(`Error processing job ${jobId}:`, error);
@@ -151,6 +153,7 @@ export async function processJob(jobId: string, options: JobProcessorOptions = d
       status: "failed",
       completedAt: new Date()
     });
+    void notifyJobErrors(jobId);
   }
 }
 

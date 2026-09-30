@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Save, Key, Bell, Shield, User, Palette, Settings as SettingsIcon, LogOut, BarChart3, Clock, History, MapPin, MessageSquare, Lightbulb, Star, Mail, Plus, Trash2, Edit2, Users, Share2, Send, Loader2, RefreshCw, CalendarClock, Terminal, AlertTriangle, Unlink, Sheet } from "lucide-react";
+import { Save, Key, Bell, User, Settings as SettingsIcon, LogOut, BarChart3, Clock, History, MapPin, MessageSquare, Lightbulb, Star, Mail, Plus, Trash2, Edit2, Users, Share2, Send, Loader2, RefreshCw, CalendarClock, Terminal, AlertTriangle, Unlink, Sheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { useLocation, Link as WouterLink } from "wouter";
@@ -28,11 +28,52 @@ interface UserSettings {
   email: string;
   timezone: string;
   notificationEmail: string;
-  notifyOnJobCompletion: boolean;
   notifyOnErrors: boolean;
-  notifyWeeklyReport: boolean;
   lastLocationSyncAt: string | null;
   nextLocationSyncAt: string | null;
+}
+
+type GoogleStatus = { authenticated: boolean; needsReconnect?: boolean; connectedEmail?: string | null };
+
+// Live state of the agency's shared Google connection (same source the
+// reconnect banner uses), not a hardcoded "Connected".
+function GoogleConnectionStatus() {
+  const { data, isLoading } = useQuery<GoogleStatus>({
+    queryKey: ["/api/auth/status"],
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+  });
+
+  const state = isLoading
+    ? { dot: "bg-gray-300", label: "Checking...", detail: "", badge: "bg-gray-100 text-gray-600" }
+    : data?.needsReconnect
+      ? { dot: "bg-amber-500", label: "Needs reconnect", detail: "The Google sign in expired. Posting, hours and syncing will fail until someone reconnects.", badge: "bg-amber-100 text-amber-800" }
+      : data?.authenticated
+        ? { dot: "bg-green-500", label: "Connected", detail: "", badge: "bg-green-100 text-green-800" }
+        : { dot: "bg-red-500", label: "Not connected", detail: "No Google connection found. Connect Google Business Profile to use posting, hours and syncing.", badge: "bg-red-100 text-red-800" };
+
+  return (
+    <div className="flex items-center justify-between gap-4 p-4 border rounded-lg" data-testid="google-connection-status">
+      <div className="flex items-center gap-3">
+        <div className={`w-2 h-2 rounded-full shrink-0 ${state.dot}`} />
+        <div>
+          <p className="font-medium text-sm">Google Business Profile API</p>
+          <p className="text-xs text-muted-foreground">
+            {data?.connectedEmail ? data.connectedEmail : "Shared agency connection"}
+          </p>
+          {state.detail && <p className="text-xs text-muted-foreground mt-1">{state.detail}</p>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <span className={`text-xs font-medium rounded-full px-2.5 py-1 ${state.badge}`}>{state.label}</span>
+        {(data?.needsReconnect || (!isLoading && !data?.authenticated)) && (
+          <Button size="sm" variant="outline" onClick={() => { window.location.href = getApiUrl("/auth/google"); }}>
+            Reconnect
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 interface SettingsProps {
@@ -112,9 +153,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
     email: settings?.email || "",
     timezone: settings?.timezone || "America/Phoenix",
     notificationEmail: settings?.notificationEmail || "",
-    notifyOnJobCompletion: settings?.notifyOnJobCompletion !== false,
     notifyOnErrors: settings?.notifyOnErrors !== false,
-    notifyWeeklyReport: settings?.notifyWeeklyReport === true,
   });
 
   // Update form data when settings are loaded
@@ -124,9 +163,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
       email: settings.email,
       timezone: settings.timezone,
       notificationEmail: settings.notificationEmail,
-      notifyOnJobCompletion: settings.notifyOnJobCompletion,
       notifyOnErrors: settings.notifyOnErrors,
-      notifyWeeklyReport: settings.notifyWeeklyReport,
     });
   }
 
@@ -533,36 +570,11 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   API Settings
                 </CardTitle>
                 <CardDescription>
-                  Google Business Profile API connection &amp; rate limiting
+                  Live status of the shared Google Business Profile connection
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <div>
-                      <p className="font-medium">Google Business Profile API</p>
-                      <p className="text-sm text-muted-foreground">
-                        Connected to {clients[0]?.userId || 'your Google account'}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge variant="secondary">Connected</Badge>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Rate Limiting</Label>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label htmlFor="requests-per-second" className="text-sm">Requests per second</Label>
-                      <Input id="requests-per-second" type="number" defaultValue="3" min="1" max="10" />
-                    </div>
-                    <div>
-                      <Label htmlFor="batch-size" className="text-sm">Batch size</Label>
-                      <Input id="batch-size" type="number" defaultValue="15" min="5" max="50" />
-                    </div>
-                  </div>
-                </div>
+                <GoogleConnectionStatus />
               </CardContent>
             </Card>}
 
@@ -576,29 +588,15 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   Notifications
                 </CardTitle>
                 <CardDescription>
-                  Configure when and how you want to be notified
+                  Get an email when a bulk job fails
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Job Completion Notifications</Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Get notified when bulk operations complete
-                    </p>
-                  </div>
-                  <Switch 
-                    checked={formData.notifyOnJobCompletion}
-                    onCheckedChange={(checked) => setFormData({ ...formData, notifyOnJobCompletion: checked })}
-                    data-testid="switch-notify-completion"
-                  />
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
                     <Label className="text-sm font-medium">Error Notifications</Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Get notified when operations fail
+                      Email the address below when a bulk post, hours or photo job fails or partly fails
                     </p>
                   </div>
                   <Switch 
@@ -608,20 +606,6 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   />
                 </div>
                 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Weekly Reports</Label>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Receive weekly performance summaries
-                    </p>
-                  </div>
-                  <Switch 
-                    checked={formData.notifyWeeklyReport}
-                    onCheckedChange={(checked) => setFormData({ ...formData, notifyWeeklyReport: checked })}
-                    data-testid="switch-notify-weekly"
-                  />
-                </div>
-
                 <Separator />
 
                 <div className="space-y-2">
@@ -1303,89 +1287,6 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
               </CardContent>
             </Card>
 
-            {/* Security */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="w-5 h-5" />
-                  Security
-                </CardTitle>
-                <CardDescription>
-                  Manage your security settings and preferences
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Two-Factor Authentication</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Add an extra layer of security to your account
-                    </p>
-                  </div>
-                  <Button variant="outline" size="sm">Enable</Button>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label className="text-sm font-medium">Session Timeout</Label>
-                    <p className="text-sm text-muted-foreground">
-                      Automatically sign out after inactivity
-                    </p>
-                  </div>
-                  <Select defaultValue="24">
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 hour</SelectItem>
-                      <SelectItem value="8">8 hours</SelectItem>
-                      <SelectItem value="24">24 hours</SelectItem>
-                      <SelectItem value="never">Never</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-              </CardContent>
-            </Card>
-
-            {/* Appearance */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Palette className="w-5 h-5" />
-                  Appearance
-                </CardTitle>
-                <CardDescription>
-                  Customize the look and feel of your dashboard
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Theme</Label>
-                  <Select defaultValue="light">
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="light">Light</SelectItem>
-                      <SelectItem value="dark">Dark</SelectItem>
-                      <SelectItem value="system">System</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label>Compact Mode</Label>
-                  <div className="flex items-center space-x-2">
-                    <Switch id="compact-mode" />
-                    <Label htmlFor="compact-mode" className="text-sm text-muted-foreground">
-                      Use compact layout to fit more content
-                    </Label>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Location Sync Schedule */}
             <Card>
               <CardHeader>
@@ -1488,18 +1389,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-green-500 rounded-full" />
-                    <div>
-                      <p className="font-medium text-sm">Google Business Profile API</p>
-                      <p className="text-xs text-muted-foreground">
-                        {clients[0]?.userId || 'your Google account'}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge variant="secondary">Connected</Badge>
-                </div>
+                <GoogleConnectionStatus />
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
