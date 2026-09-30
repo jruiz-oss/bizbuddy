@@ -1,10 +1,16 @@
 import { useEffect, useRef, useState } from "react";
+import { getApiUrl } from "@/lib/queryClient";
 
 // Easter egg: the Red Bull can slowly walks the edges of the screen.
 // Hover pauses it and shows the note, click pops it (spin + "psssht").
 const SIZE = 44;       // w-11 h-11
 const MARGIN = 12;     // matches the old bottom-3/right-3 spot
 const SPEED = 45;      // px per second
+const PHOTO = getApiUrl("/api/easter-egg/photo"); // Jorge's BizBuddy profile picture
+const PRIZE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+const GRID = 5;               // photo splits into GRID x GRID flipping blocks
+const PHOTO_SIZE = 240;
+const RAIN_MS = 1200;
 
 type Edge = "bottom" | "left" | "top" | "right";
 
@@ -16,8 +22,38 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
   const [alignEnd, setAlignEnd] = useState(true); // tooltip hugs the right/bottom side
   const [popped, setPopped] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const [stage, setStage] = useState<"idle" | "rain" | "reveal">("idle");
+  const [photoOk, setPhotoOk] = useState(true);
+  const timers = useRef<number[]>([]);
 
-  pausedRef.current = hovered || popped;
+  pausedRef.current = hovered || popped || stage !== "idle";
+
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setPhotoOk(true);
+    img.onerror = () => setPhotoOk(false);
+    img.src = PHOTO;
+    return () => timers.current.forEach(clearTimeout);
+  }, []);
+
+  const startShow = () => {
+    setPopped(true);
+    timers.current.push(window.setTimeout(() => setPopped(false), 900));
+    if (stage !== "idle") return;
+    setStage("rain");
+    timers.current.push(window.setTimeout(() => setStage("reveal"), RAIN_MS));
+  };
+
+  // Stable random rain drops (cans) for this mount
+  const drops = useRef(
+    Array.from({ length: 36 }, () => ({
+      left: Math.random() * 100,
+      delay: Math.random() * 0.6,
+      dur: 0.6 + Math.random() * 0.5,
+      size: 18 + Math.random() * 18,
+      spin: (Math.random() < 0.5 ? -1 : 1) * (180 + Math.random() * 360),
+    }))
+  ).current;
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -68,10 +104,91 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
   };
 
   return (
+    <>
+    <style>{`
+      @keyframes bb-can-fall { from { transform: translateY(-10vh) rotate(0deg); } to { transform: translateY(110vh) rotate(var(--spin)); } }
+      @keyframes bb-block-in { from { transform: rotateY(90deg); opacity: 0; } to { transform: rotateY(0deg); opacity: 1; } }
+      @keyframes bb-bubble-in { 0% { transform: scale(0); opacity: 0; } 70% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); } }
+      @keyframes bb-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    `}</style>
+
+    {stage === "rain" && (
+      <div className="fixed inset-0 z-[60] pointer-events-none overflow-hidden" data-testid="easter-egg-rain">
+        {drops.map((d, i) => (
+          <img
+            key={i}
+            src={src}
+            alt=""
+            className="absolute top-0 object-contain"
+            style={{
+              left: `${d.left}%`,
+              width: d.size,
+              height: d.size,
+              ["--spin" as any]: `${d.spin}deg`,
+              animation: `bb-can-fall ${d.dur}s linear ${d.delay}s both`,
+            }}
+          />
+        ))}
+      </div>
+    )}
+
+    {stage === "reveal" && (
+      <div
+        className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center"
+        style={{ animation: "bb-fade-in 200ms ease-out" }}
+        onClick={() => setStage("idle")}
+        data-testid="easter-egg-reveal"
+      >
+        <div className="relative" onClick={(e) => e.stopPropagation()}>
+          {/* Old-school block transition: photo lands as tiles flipping in on a diagonal */}
+          <div
+            className="grid rounded-lg overflow-hidden shadow-2xl"
+            style={{ width: PHOTO_SIZE, height: PHOTO_SIZE, gridTemplateColumns: `repeat(${GRID}, 1fr)`, perspective: 800 }}
+          >
+            {Array.from({ length: GRID * GRID }, (_, i) => {
+              const r = Math.floor(i / GRID), c = i % GRID;
+              return (
+                <div
+                  key={i}
+                  style={{
+                    backgroundImage: photoOk ? `url(${PHOTO})` : "linear-gradient(135deg, #1e3a8a, #dc2626)",
+                    backgroundSize: `${GRID * 100}% ${GRID * 100}%`,
+                    backgroundPosition: `${(c / (GRID - 1)) * 100}% ${(r / (GRID - 1)) * 100}%`,
+                    animation: `bb-block-in 450ms ease-out ${(r + c) * 70}ms both`,
+                  }}
+                />
+              );
+            })}
+          </div>
+          {!photoOk && (
+            <div className="absolute inset-0 flex items-center justify-center text-white text-5xl font-bold pointer-events-none" style={{ animation: "bb-fade-in 300ms ease-out 800ms both" }}>
+              J
+            </div>
+          )}
+
+          {/* Speech bubble */}
+          <a
+            href={PRIZE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setStage("idle")}
+            className="absolute -top-14 left-1/2 -translate-x-1/2 origin-bottom whitespace-nowrap"
+            style={{ animation: "bb-bubble-in 350ms ease-out 1000ms both" }}
+            data-testid="easter-egg-prize"
+          >
+            <div className="relative bg-white text-gray-900 text-sm font-semibold rounded-2xl px-4 py-2 shadow-lg border border-gray-200 hover:bg-yellow-50">
+              You found me! Click here for your prize
+              <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-white" />
+            </div>
+          </a>
+        </div>
+      </div>
+    )}
+
     <button
       ref={wrapRef}
       type="button"
-      onClick={() => { setPopped(true); setTimeout(() => setPopped(false), 900); }}
+      onClick={startShow}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setHovered(true)}
@@ -86,7 +203,7 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
           src={src}
           alt=""
           draggable={false}
-          className={`w-11 h-11 object-contain select-none opacity-50 group-hover:opacity-100 transition-all duration-200 ${popped ? "rotate-[360deg] scale-125 opacity-100" : ""}`}
+          className={`w-11 h-11 object-contain select-none opacity-75 group-hover:opacity-100 transition-all duration-200 ${popped ? "rotate-[360deg] scale-125 opacity-100" : ""}`}
           style={{ transitionDuration: popped ? "700ms" : undefined }}
         />
         <div className={`absolute ${tipPos[edge]} opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap`}>
@@ -96,5 +213,6 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
         </div>
       </div>
     </button>
+    </>
   );
 }

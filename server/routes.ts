@@ -309,6 +309,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // NOTE: /api/auth/revoke-google is deliberately NOT public — it disconnects
     // the shared Google connection for the entire team (super_admin only).
     "/api/copy-review", // public share link opened from review emails
+    "/api/easter-egg/photo", // login-screen easter egg: returns ONLY Jorge's profile picture bytes
   ]);
   // Endpoints a team member needs to pick themselves and log in BEFORE they have
   // any session. Without these being reachable, a coworker who hasn't done Google
@@ -1082,6 +1083,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error('Error fetching local user:', error);
       res.status(500).json({ error: 'Failed to fetch local user' });
+    }
+  });
+
+  // Login-screen easter egg (Red Bull can). Public on purpose, but it returns
+  // nothing except the image bytes of Jorge's profile picture: no name, email,
+  // id or roster data. 404 if he has no picture set.
+  app.get("/api/easter-egg/photo", async (_req, res) => {
+    try {
+      const userId = await getAgencyUserId();
+      if (!userId) return res.status(404).end();
+      const roster = await storage.getLocalUsersByUserId(userId);
+      const jorge =
+        roster.find(u => (u.email || "").toLowerCase() === "jruiz@commitagency.com" && u.profilePictureUrl) ||
+        roster.find(u => /^jorge\b/i.test(u.name || "") && u.profilePictureUrl);
+      const pic = jorge?.profilePictureUrl;
+      if (!pic) return res.status(404).end();
+      const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(pic);
+      if (m) {
+        res.setHeader("Content-Type", m[1]);
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.send(Buffer.from(m[2], "base64"));
+      }
+      if (/^https?:\/\//i.test(pic)) return res.redirect(pic);
+      return res.status(404).end();
+    } catch (error) {
+      console.error("Error serving easter egg photo:", error);
+      res.status(500).end();
     }
   });
 
