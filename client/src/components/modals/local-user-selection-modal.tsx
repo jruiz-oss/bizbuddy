@@ -12,6 +12,7 @@ import { useLocalUserContext } from "@/contexts/local-user-context";
 import { User, Plus, Pencil, Trash2, Loader2, Upload, X, RefreshCw, ArrowLeft, Eye, EyeOff, Ticket, Copy, Check, Ban } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { LocalUser } from "@shared/schema";
+import logoPath from "@/assets/bizbuddy-logo.png";
 
 // API returns passwordHash stripped, hasPassword added
 type SafeLocalUser = Omit<LocalUser, 'passwordHash'> & { hasPassword: boolean };
@@ -60,6 +61,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const [newRole, setNewRole] = useState<string>("admin");
   const [isUploading, setIsUploading] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [canPopped, setCanPopped] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetForm = () => {
@@ -842,6 +844,76 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const shownView: View = view === 'list' && !isManageMode ? 'signin' : view;
   const showBootstrap = shownView === 'signin' && !isManageMode && !selectedLocalUser && !!bootstrap?.needsBootstrap;
 
+  const bodyContent = (isLoading || (shownView === 'signin' && bootstrapLoading)) ? (
+    <div className="flex justify-center py-8">
+      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+    </div>
+  ) : (
+    <>
+      {shownView === 'list' && renderList()}
+      {shownView === 'signin' && (showBootstrap ? renderList() : renderSignin())}
+      {shownView === 'signup' && renderSignup()}
+      {shownView === 'forgot' && renderForgot()}
+      {shownView === 'setup' && renderSetup()}
+      {shownView === 'create' && renderProfileForm(true)}
+      {shownView === 'edit' && renderProfileForm(false)}
+      {shownView === 'invites' && renderInvites()}
+    </>
+  );
+
+  // Logged-out: a normal full-page sign-in screen (no popup card). The dialog
+  // is only used for the in-app "Manage Team" flow.
+  if (!isManageMode && !selectedLocalUser) {
+    if (!open) return null;
+    return (
+      <div className="relative w-full min-h-screen bg-background flex flex-col items-center justify-center px-6 py-12" data-testid="page-sign-in">
+        <div className="w-full max-w-sm">
+          <div className="flex justify-center mb-6">
+            <img
+              src={logoPath}
+              alt="BizBuddy"
+              className="h-44 w-auto object-contain mix-blend-multiply select-none"
+              draggable={false}
+              data-testid="img-signin-logo"
+            />
+          </div>
+          <div className="text-center mb-8">
+            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-modal-title">{titleMap[shownView]}</h1>
+            <p className="text-sm text-muted-foreground mt-1.5">{descMap[shownView]}</p>
+          </div>
+          {bodyContent}
+        </div>
+
+        <p className="absolute bottom-4 left-0 right-0 text-center text-xs text-muted-foreground/70">
+          Commit Agency &middot; Internal use only
+        </p>
+
+        {/* Easter egg: hover for a note, click to pop the can */}
+        <button
+          type="button"
+          onClick={() => { setCanPopped(true); setTimeout(() => setCanPopped(false), 900); }}
+          className="fixed bottom-3 right-3 group cursor-pointer bg-transparent border-0 p-0"
+          aria-label=""
+          data-testid="easter-egg-redbull"
+        >
+          <div className="relative">
+            <img
+              src="/redbullicon.png"
+              alt=""
+              className={`w-11 h-11 object-contain opacity-50 group-hover:opacity-100 transition-all duration-200 ${canPopped ? "rotate-[360deg] scale-125 opacity-100" : ""}`}
+              style={{ transitionDuration: canPopped ? "700ms" : undefined }}
+            />
+            <div className="absolute bottom-full right-0 mb-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+              <div className="bg-gray-900 text-white text-[10px] rounded py-1.5 px-2.5 shadow-lg border border-gray-700 text-center">
+                {canPopped ? "psssht! gives you wings" : "Created By Jorgey Porgie"}
+              </div>
+            </div>
+          </div>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleCloseModal}>
       <DialogContent
@@ -856,22 +928,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
-          {(isLoading || (shownView === 'signin' && bootstrapLoading)) ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <>
-              {shownView === 'list' && renderList()}
-              {shownView === 'signin' && (showBootstrap ? renderList() : renderSignin())}
-              {shownView === 'signup' && renderSignup()}
-              {shownView === 'forgot' && renderForgot()}
-              {shownView === 'setup' && renderSetup()}
-              {shownView === 'create' && renderProfileForm(true)}
-              {shownView === 'edit' && renderProfileForm(false)}
-              {shownView === 'invites' && renderInvites()}
-            </>
-          )}
+          {bodyContent}
         </div>
       </DialogContent>
     </Dialog>

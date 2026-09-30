@@ -4822,14 +4822,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get suggested edit action history
   app.get("/api/suggested-edits/history", async (req, res) => {
     try {
-      const { limit = '20' } = req.query;
-      const limitNum = Math.min(parseInt(limit as string) || 20, 200);
-      
+      // Paged, no all-time cap: everything stays in the DB and the client pages through it.
+      const { limit = '20', offset = '0' } = req.query;
+      const limitNum = Math.min(Math.max(parseInt(limit as string) || 20, 1), 200);
+      const offsetNum = Math.max(parseInt(offset as string) || 0, 0);
+
+      const [{ count: total }] = await db.select({ count: sql<number>`count(*)::int` }).from(suggestedEditActions);
       const history = await db.select()
         .from(suggestedEditActions)
-        .orderBy(desc(suggestedEditActions.performedAt))
-        .limit(limitNum);
-      
+        .orderBy(desc(suggestedEditActions.performedAt), desc(suggestedEditActions.id))
+        .limit(limitNum)
+        .offset(offsetNum);
+
+      res.setHeader("X-Total-Count", String(total));
       res.json(history);
     } catch (error) {
       console.error("Error fetching suggested edit history:", error);

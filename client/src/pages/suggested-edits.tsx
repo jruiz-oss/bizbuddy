@@ -1,6 +1,6 @@
 import { SideNav } from "@/components/SideNav";
 import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -148,16 +148,32 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
     createdAt: string;
   }
 
-  const { data: history = [] } = useQuery<ActionHistory[]>({
-    queryKey: ["/api/suggested-edits/history", { limit: 200 }],
-    queryFn: async () => {
-      const response = await fetch(getApiUrl("/api/suggested-edits/history?limit=200"), {
-        credentials: "include",
-      });
+  const HISTORY_PAGE_SIZE = 50;
+  const {
+    data: historyPages,
+    fetchNextPage: fetchNextHistoryPage,
+    hasNextPage: hasMoreHistory,
+    isFetchingNextPage: loadingMoreHistory,
+  } = useInfiniteQuery<{ items: ActionHistory[]; total: number }>({
+    queryKey: ["/api/suggested-edits/history"],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const response = await fetch(
+        getApiUrl(`/api/suggested-edits/history?limit=${HISTORY_PAGE_SIZE}&offset=${pageParam}`),
+        { credentials: "include" },
+      );
       if (!response.ok) throw new Error("Failed to fetch history");
-      return response.json();
+      const items: ActionHistory[] = await response.json();
+      const total = parseInt(response.headers.get("X-Total-Count") || "") || items.length;
+      return { items, total };
+    },
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.items.length, 0);
+      return lastPage.items.length > 0 && loaded < lastPage.total ? loaded : undefined;
     },
   });
+  const history: ActionHistory[] = historyPages?.pages.flatMap((p) => p.items) ?? [];
+  const historyTotal = historyPages?.pages[0]?.total ?? history.length;
 
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(10);
 
@@ -332,7 +348,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
         title: "Change Undone",
         description: "Your business profile has been updated accordingly.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/suggested-edits/history", { limit: 200 }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/suggested-edits/history"] });
       setUndoingId(null);
     },
     onError: (error: any) => {
@@ -1385,7 +1401,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                 </h2>
                 {history.length > 0 && (
                   <span className="bg-cyan-100 text-cyan-700 text-[11px] font-semibold px-2 py-0.5 rounded-full">
-                    {history.length}
+                    {historyTotal}
                   </span>
                 )}
               </div>
@@ -1506,16 +1522,21 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
                       </div>
                     ))}
                   </div>
-                  {history.length > visibleHistoryCount && (
+                  {historyTotal > visibleHistoryCount && (
                     <div className="p-4 border-t border-gray-100 dark:border-gray-800">
                       <Button
                         variant="ghost"
                         className="w-full text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                        onClick={() => setVisibleHistoryCount(prev => Math.min(prev + 20, 200))}
+                        disabled={loadingMoreHistory}
+                        onClick={() => {
+                          const next = visibleHistoryCount + 20;
+                          setVisibleHistoryCount(next);
+                          if (next > history.length && hasMoreHistory) fetchNextHistoryPage();
+                        }}
                         data-testid="button-see-more-history"
                       >
                         <ChevronDown className="w-4 h-4 mr-2" />
-                        See More ({history.length - visibleHistoryCount} remaining)
+                        See More ({Math.max(historyTotal - visibleHistoryCount, 0)} remaining)
                       </Button>
                     </div>
                   )}

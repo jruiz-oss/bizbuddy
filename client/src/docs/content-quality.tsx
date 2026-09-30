@@ -30,7 +30,7 @@ export const qualityArticles: Article[] = [
           <li><B>Accept all in category</B> handles a whole group. Expect "Partial Success" if a few fail.</li>
         </UL>
         <H2 id="history">History and undo</H2>
-        <P>Decisions are kept (last 200, 10 shown at a time). <B>Undo</B> pushes the previous values back to Google, and you can redo it.</P>
+        <P>Every decision is kept forever, with no limit. The newest 10 show first and See More loads older ones. <B>Undo</B> pushes the previous values back to Google, and you can redo it.</P>
         <Callout tone="tip" title="When a scan says it finished with errors">
           <P>"Couldn't be checked" locations usually hit a Google rate limit or an expired connection. Check for the amber reconnect banner, then rescan.</P>
         </Callout>
