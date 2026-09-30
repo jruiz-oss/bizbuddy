@@ -506,7 +506,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           </button>
         </div>
       </div>
-      <Button className="w-full" onClick={handleLogin} disabled={!loginEmail.trim() || !password || loginMutation.isPending} data-testid="button-sign-in">
+      <Button className="w-full bg-[#001f3f] text-white hover:bg-[#002a57]" onClick={handleLogin} disabled={!loginEmail.trim() || !password || loginMutation.isPending} data-testid="button-sign-in">
         {loginMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
         Sign In
       </Button>
