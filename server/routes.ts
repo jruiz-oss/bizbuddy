@@ -312,10 +312,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // design. Matched against the path relative to the /api mount.
   const isLocalUserBootstrapPath = (req: any): boolean => {
     const p = req.path.replace(/\/$/, "");
-    if (req.method === "GET" && p === "/local-users") return true;               // list to pick from
-    if (req.method === "GET" && /^\/local-users\/[^/]+$/.test(p)) return true;    // restore saved pick
-    if (req.method === "POST" && /^\/local-users\/[^/]+\/login$/.test(p)) return true;
-    if (req.method === "POST" && /^\/local-users\/[^/]+\/setup$/.test(p)) return true;
+    // NOTE: the roster (GET /local-users) is deliberately NOT public. The login
+    // screen is email + password, so we never hand an anonymous visitor the list
+    // of team members to pick from / guess at.
+    if (req.method === "GET" && p === "/auth/bootstrap-status") return true;       // "is this a first run?" (boolean only)
+    if (req.method === "POST" && p === "/local-users/login") return true;          // email + password
+    if (req.method === "POST" && p === "/local-users/setup-account") return true;  // new coworker: name + invite code
+    if (req.method === "POST" && /^\/local-users\/[^/]+\/setup$/.test(p)) return true; // first-run bootstrap (id is an unguessable uuid)
     return false;
   };
 
@@ -996,18 +999,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Local Users - CRUD endpoints
   app.get("/api/local-users", async (req, res) => {
     try {
-      // Fall back to the single agency account so the team-member picker loads
-      // for a coworker who hasn't signed in yet.
-      const userId = req.session.userId ?? await getAgencyUserId();
+      // Behind the auth gate: only signed-in sessions can see the roster.
+      const userId = req.session.userId;
       if (!userId) {
-        return res.json([]);
+        return res.status(401).json({ message: "Authentication required" });
       }
-      // Only include emails for authenticated sessions — this endpoint is
-      // reachable pre-login for the team picker, and must not leak the roster's
-      // email addresses to the open internet.
-      const authed = !!(req.session?.userId || req.session?.localUserId);
       const localUsers = await storage.getLocalUsersByUserId(userId);
-      res.json(localUsers.map(u => safeLocalUser(u, { includeEmail: authed })));
+      res.json(localUsers.map(u => safeLocalUser(u)));
     } catch (error) {
       console.error('Error fetching local users:', error);
       res.status(500).json({ error: 'Failed to fetch local users' });
@@ -1028,16 +1026,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Login with password
-  app.post("/api/local-users/:id/login", async (req, res) => {
+  // True only when nobody has ever been added (genuine first run). Public, and
+  // intentionally returns nothing but a boolean.
+  app.get("/api/auth/bootstrap-status", async (req, res) => {
     try {
-      // Throttle password guessing: per IP+account AND a looser per-IP cap so an
-      // attacker can't just rotate through account IDs from one machine.
-      const rlKey = `login:${clientIp(req)}:${req.params.id}`;
-      // Bumped from 5 → 10 (matches the /setup endpoint's cap below) — 5 was
-      // tight enough that normal troubleshooting (switching profiles, retyping
-      // a password) could trip it and get mistaken for "my password stopped
-      // working" when it was actually a 429 lockout.
+      const userId = req.session.userId ?? await getAgencyUserId();
+      if (!userId) return res.json({ needsBootstrap: true });
+      const roster = await storage.getLocalUsersByUserId(userId);
+      res.json({ needsBootstrap: roster.length === 0 });
+    } catch (error) {
+      console.error('Error checking bootstrap status:', error);
+      res.status(500).json({ error: 'Failed to check status' });
+    }
+  });
+
+  // Login with email + password. The login screen never lists team members, so
+  // there is nothing to pick or guess — and every failure returns the same
+  // message so it can't be used to learn which emails have accounts.
+  const DUMMY_PASSWORD_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
+  app.post("/api/local-users/login", async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+      const emailNorm = typeof email === 'string' ? email.trim().toLowerCase() : '';
+
+      // Throttle guessing: per IP+email AND a looser per-IP cap so rotating
+      // through emails from one machine doesn't help.
+      const rlKey = `login:${clientIp(req)}:${emailNorm}`;
       const rl = rateLimit(rlKey, { max: 10, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
       const rlIp = rateLimit(`login-ip:${clientIp(req)}`, { max: 30, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000 });
       if (!rl.ok || !rlIp.ok) {
@@ -1046,30 +1060,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(429).json({ error: `Too many login attempts. Try again in ${Math.ceil(retry / 60)} minute(s).` });
       }
 
-      const localUser = await storage.getLocalUser(req.params.id);
-      if (!localUser) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-      if (!localUser.passwordHash) {
-        return res.status(400).json({ error: 'Account not set up yet' });
-      }
-      const { password } = req.body;
-      if (!password) {
-        return res.status(400).json({ error: 'Password is required' });
-      }
       // Cap length BEFORE hashing: scryptSync is synchronous and CPU-bound, so a
       // multi-megabyte "password" would block the event loop (DoS).
-      if (typeof password !== 'string' || password.length > 200) {
-        return res.status(400).json({ error: 'Invalid password' });
+      if (!emailNorm || emailNorm.length > 320 || typeof password !== 'string' || !password || password.length > 200) {
+        return res.status(400).json({ error: 'Email and password are required' });
       }
-      if (!verifyPassword(password, localUser.passwordHash)) {
-        return res.status(401).json({ error: 'Incorrect password' });
+
+      const localUser = await storage.getLocalUserByEmail(emailNorm);
+      // Always run one hash verification so "no such account" and "wrong
+      // password" take the same time.
+      const ok = verifyPassword(password, localUser?.passwordHash || DUMMY_PASSWORD_HASH);
+      if (!localUser || !localUser.passwordHash || !ok) {
+        return res.status(401).json({ error: 'Incorrect email or password' });
       }
+
       // Successful auth — clear the per-account throttle for this IP.
       clearRateLimit(rlKey);
-      // Prevent session fixation: fresh session ID on privilege change. The
-      // global auth gate re-resolves userId from localUserId, so dropping any
-      // prior session state here is safe.
+      // Prevent session fixation: fresh session ID on privilege change.
       await regenerateSession(req);
       // Establish the local-user identity server-side. This is the authoritative
       // source for getLocalUserId() — not the client header or localStorage.
@@ -1088,7 +1095,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Set up account (email + password) for the first time
-  app.post("/api/local-users/:id/setup", async (req, res) => {
+  // Shared by the two setup routes below.
+  const completeAccountSetup = async (req: any, res: any, localUserId: string, opts: { allowBootstrap: boolean }) => {
     try {
       // Throttle: setup is unauthenticated by design (onboarding), so without a
       // limit it's an open door for invite-code guessing and account claiming.
@@ -1104,7 +1112,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!userId) {
         return res.status(401).json({ error: 'Not authenticated' });
       }
-      const localUser = await storage.getLocalUser(req.params.id);
+      const localUser = await storage.getLocalUser(localUserId);
       if (!localUser) {
         return res.status(404).json({ error: 'User not found' });
       }
@@ -1129,7 +1137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let bootstrapAllowed = false;
       if (isSuperAdmin) {
         const peers = await storage.getLocalUsersByUserId(userId);
-        bootstrapAllowed = peers.every((u: any) => !u.passwordHash);
+        bootstrapAllowed = opts.allowBootstrap && peers.every((u: any) => !u.passwordHash);
       }
 
       let inviteToConsume: { id: string } | null = null;
@@ -1145,9 +1153,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const passwordHash = hashPassword(password);
-      const updated = await storage.updateLocalUser(req.params.id, { email, passwordHash } as any);
+      const updated = await storage.updateLocalUser(localUserId, { email: String(email).trim().toLowerCase(), passwordHash } as any);
       if (inviteToConsume) {
-        await storage.markInviteCodeUsed(inviteToConsume.id, req.params.id);
+        await storage.markInviteCodeUsed(inviteToConsume.id, localUserId);
       }
       // Prevent session fixation: fresh session ID before establishing identity.
       await regenerateSession(req);
@@ -1159,6 +1167,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error('Error setting up local user account:', error);
+      res.status(500).json({ error: 'Setup failed' });
+    }
+  };
+
+  app.post("/api/local-users/:id/setup", (req, res) => completeAccountSetup(req, res, req.params.id, { allowBootstrap: true }));
+
+  // New coworker without a session: they don't pick from a list (there isn't
+  // one). They give the name the admin added them under plus a valid invite
+  // code. Every failure returns the same message so this can't be used to probe
+  // which names exist.
+  app.post("/api/local-users/setup-account", async (req, res) => {
+    const fail = () => res.status(400).json({ error: 'We could not set up that account. Check your name and invite code.' });
+    try {
+      const rl = rateLimit(`setup-name-ip:${clientIp(req)}`, { max: 10, windowMs: 15 * 60 * 1000, blockMs: 30 * 60 * 1000 });
+      if (!rl.ok) {
+        res.setHeader('Retry-After', String(rl.retryAfterSec || 0));
+        return res.status(429).json({ error: `Too many attempts. Try again in ${Math.ceil((rl.retryAfterSec || 0) / 60)} minute(s).` });
+      }
+      const { name, inviteCode } = req.body || {};
+      if (typeof name !== 'string' || typeof inviteCode !== 'string' || !name.trim() || !inviteCode.trim()) return fail();
+      const agencyUserId = req.session.userId ?? await getAgencyUserId();
+      if (!agencyUserId) return fail();
+
+      const invite = await storage.getInviteCodeByCode(agencyUserId, inviteCode.trim());
+      if (!invite || !invite.isActive || invite.usedAt) return fail();
+
+      const wanted = name.trim().toLowerCase();
+      const matches = (await storage.getLocalUsersByUserId(agencyUserId))
+        .filter(u => !u.passwordHash && u.name.trim().toLowerCase() === wanted);
+      if (matches.length !== 1) return fail();
+
+      return completeAccountSetup(req, res, matches[0].id, { allowBootstrap: false });
+    } catch (error) {
+      console.error('Error setting up account by name:', error);
       res.status(500).json({ error: 'Setup failed' });
     }
   });
@@ -1323,15 +1365,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!actingUser || (actingUser.role !== 'super_admin' && actingUser.id !== req.params.id)) {
         return res.status(403).json({ error: 'Not authorized to edit this user' });
       }
-      const { name, title, profilePictureUrl } = req.body;
+      const { name, title, profilePictureUrl, role } = req.body;
       const safeProfileUrl = validateProfilePictureUrl(profilePictureUrl);
       if (profilePictureUrl && safeProfileUrl === null) {
         return res.status(400).json({ error: 'profilePictureUrl must be a data:image URI or an https:// URL' });
       }
+
+      // Role changes (promote to / demote from super_admin) are super_admin only.
+      let nextRole: string | undefined;
+      if (role !== undefined) {
+        if (actingUser.role !== 'super_admin') {
+          return res.status(403).json({ error: 'Only super admins can change roles' });
+        }
+        if (role !== 'admin' && role !== 'super_admin') {
+          return res.status(400).json({ error: 'Invalid role' });
+        }
+        const target = await storage.getLocalUser(req.params.id);
+        if (!target || !target.isActive || target.userId !== actingUser.userId) {
+          return res.status(404).json({ error: 'Team member not found' });
+        }
+        if (target.role !== role) {
+          // Never allow demoting the last super admin (would lock everyone out
+          // of user management and the shared Google connection).
+          if (target.role === 'super_admin' && role !== 'super_admin') {
+            const roster = await storage.getLocalUsersByUserId(actingUser.userId);
+            if (roster.filter(u => u.role === 'super_admin').length <= 1) {
+              return res.status(400).json({ error: 'There must be at least one super admin' });
+            }
+          }
+          nextRole = role;
+        }
+      }
+
       const localUser = await storage.updateLocalUser(req.params.id, {
         name,
         title,
         profilePictureUrl: safeProfileUrl,
+        ...(nextRole ? { role: nextRole } : {}),
       });
       res.json(safeLocalUser(localUser));
     } catch (error) {

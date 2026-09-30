@@ -165,8 +165,8 @@ function AppContent() {
   // The roster of local users. If there are none, nobody has ever connected
   // Google and this is a genuine first-run bootstrap — the only case where the
   // Google sign-in screen is the right thing to show.
-  const { data: localUsers, isLoading } = useQuery<Array<{ id: string }>>({
-    queryKey: ["/api/local-users"],
+  const { data: bootstrapStatus, isLoading } = useQuery<{ needsBootstrap: boolean }>({
+    queryKey: ["/api/auth/bootstrap-status"],
     retry: 1,
   });
 
@@ -207,7 +207,7 @@ function AppContent() {
   // failed (network blip, cold instance), fall through to the local-user picker
   // rather than throwing up a Google wall nobody on the team can get past.
   const needsBootstrap =
-    Array.isArray(localUsers) && localUsers.length === 0 && !authStatus?.authenticated;
+    bootstrapStatus?.needsBootstrap === true && !authStatus?.authenticated;
   if (needsBootstrap && !devMode) {
     return <Login />;
   }

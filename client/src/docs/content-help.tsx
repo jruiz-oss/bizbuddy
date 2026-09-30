@@ -85,7 +85,7 @@ export const helpArticles: Article[] = [
             ["Account creation fails on password", "Use 10 or more characters and avoid common words."],
             ["Session expired, please log in again", "Sign in again. Sessions last 7 days."],
             ["Reset link does not work", "Links expire after 1 hour. Request a new one."],
-            ["Your name is not in the list", "A super admin adds you from the Team button, or creates an invite code."],
+            ["Account creation says it could not set up your account", "Your name has to match how a super admin added you in the Team list, and the invite code has to be unused."],
           ]}
         />
         <Callout tone="note" title="A dead Google connection does not block login">

@@ -16,7 +16,7 @@ import type { LocalUser } from "@shared/schema";
 // API returns passwordHash stripped, hasPassword added
 type SafeLocalUser = Omit<LocalUser, 'passwordHash'> & { hasPassword: boolean };
 
-type View = 'list' | 'login' | 'setup' | 'create' | 'edit' | 'invites' | 'forgot';
+type View = 'list' | 'signin' | 'signup' | 'setup' | 'create' | 'edit' | 'invites' | 'forgot';
 
 type InviteCode = {
   id: string;
@@ -39,8 +39,11 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const [view, setView] = useState<View>('list');
   const [targetUser, setTargetUser] = useState<SafeLocalUser | null>(null);
 
-  // login form
+  // sign-in form (email + password — there is no public list of team members)
+  const [loginEmail, setLoginEmail] = useState("");
   const [password, setPassword] = useState("");
+  // new-coworker signup form (name the admin added them under + invite code)
+  const [signupName, setSignupName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   // forgot-password form
   const [forgotEmail, setForgotEmail] = useState("");
@@ -60,6 +63,8 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const resetForm = () => {
+    setLoginEmail("");
+    setSignupName("");
     setPassword("");
     setForgotEmail("");
     setForgotSubmitted(false);
@@ -81,14 +86,23 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     return selectedLocalUser?.role === 'super_admin';
   };
 
+  // The roster is only available to signed-in sessions (it is never shown on the
+  // login screen), so only fetch it when managing the team.
   const { data: localUsers = [], isLoading } = useQuery<SafeLocalUser[]>({
     queryKey: ["/api/local-users"],
-    enabled: open,
+    enabled: open && (isManageMode || !!selectedLocalUser),
+  });
+
+  // First run only: nobody has been added yet, so the login screen becomes
+  // "add your name". The server answers with a boolean, nothing more.
+  const { data: bootstrap, isLoading: bootstrapLoading } = useQuery<{ needsBootstrap: boolean }>({
+    queryKey: ["/api/auth/bootstrap-status"],
+    enabled: open && !isManageMode && !selectedLocalUser,
   });
 
   const loginMutation = useMutation({
-    mutationFn: async ({ id, pwd }: { id: string; pwd: string }) => {
-      const res = await apiRequest("POST", `/api/local-users/${id}/login`, { password: pwd });
+    mutationFn: async ({ email, pwd }: { email: string; pwd: string }) => {
+      const res = await apiRequest("POST", `/api/local-users/login`, { email, password: pwd });
       return res.json();
     },
     onSuccess: (user: SafeLocalUser) => {
@@ -103,7 +117,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
       const message = parseApiError(err, "Please try again.");
       const isRateLimited = /too many login attempts/i.test(message);
       toast({
-        title: isRateLimited ? "Too many attempts" : "Incorrect password",
+        title: isRateLimited ? "Too many attempts" : "Couldn't sign in",
         description: message,
         variant: "destructive",
       });
@@ -122,6 +136,22 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: parseApiError(err, "Something went wrong. Please try again."), variant: "destructive" });
+    },
+  });
+
+  const signupMutation = useMutation({
+    mutationFn: async (data: { name: string; email: string; pwd: string; inviteCode: string }) => {
+      const res = await apiRequest("POST", `/api/local-users/setup-account`, { name: data.name, email: data.email, password: data.pwd, inviteCode: data.inviteCode });
+      return res.json();
+    },
+    onSuccess: (user: SafeLocalUser) => {
+      setSelectedLocalUser(user as any);
+      setShowSelectionModal(false);
+      resetForm();
+      toast({ title: "Account created!", description: "You're all set." });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Setup failed", description: parseApiError(err, "Please try again."), variant: "destructive" });
     },
   });
 
@@ -162,7 +192,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: { name: string; title: string; profilePictureUrl: string } }) => {
+    mutationFn: async ({ id, data }: { id: string; data: { name: string; title: string; profilePictureUrl: string; role?: string } }) => {
       const res = await apiRequest("PATCH", `/api/local-users/${id}`, data);
       return res.json();
     },
@@ -260,15 +290,21 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   const getInitials = (name: string) =>
     name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 
-  const handleUserClick = (user: SafeLocalUser) => {
-    if (isManageMode) return;
-    setTargetUser(user);
-    setView(user.hasPassword ? 'login' : 'setup');
+  const handleLogin = () => {
+    if (!loginEmail.trim() || !password) return;
+    loginMutation.mutate({ email: loginEmail.trim(), pwd: password });
   };
 
-  const handleLogin = () => {
-    if (!targetUser || !password) return;
-    loginMutation.mutate({ id: targetUser.id, pwd: password });
+  const handleSignup = () => {
+    if (!signupName.trim() || !setupEmail.trim() || !setupPassword || !setupInviteCode.trim()) {
+      toast({ title: "Error", description: "All fields are required", variant: "destructive" });
+      return;
+    }
+    if (setupPassword.length < 6) {
+      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" });
+      return;
+    }
+    signupMutation.mutate({ name: signupName.trim(), email: setupEmail.trim(), pwd: setupPassword, inviteCode: setupInviteCode.trim() });
   };
 
   const handleSetup = () => {
@@ -309,7 +345,13 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
     }
     updateMutation.mutate({
       id: targetUser.id,
-      data: { name: newName.trim(), title: newTitle.trim(), profilePictureUrl: newProfilePicture.trim() },
+      data: {
+        name: newName.trim(),
+        title: newTitle.trim(),
+        profilePictureUrl: newProfilePicture.trim(),
+        // Only super admins can change roles; server enforces this too.
+        ...(selectedLocalUser?.role === 'super_admin' ? { role: newRole } : {}),
+      },
     });
   };
 
@@ -350,8 +392,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             {localUsers.map((user) => (
               <div
                 key={user.id}
-                className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent cursor-pointer group"
-                onClick={() => handleUserClick(user)}
+                className="flex items-center gap-3 p-3 rounded-lg border group"
                 data-testid={`card-user-${user.id}`}
               >
                 <Avatar className="h-10 w-10">
@@ -402,41 +443,39 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           {isManageMode && (
             <Button className="w-full mt-2" onClick={() => handleCloseModal(false)} data-testid="button-done-managing">Done</Button>
           )}
-          {!isManageMode && (
-            <Button variant="ghost" className="w-full mt-2 text-muted-foreground" onClick={() => { window.location.href = getApiUrl("/auth/google?prompt=consent"); }} data-testid="button-force-relogin">
-              <RefreshCw className="w-4 h-4 mr-2" />Re-authenticate Google Account
-            </Button>
-          )}
         </div>
       )}
     </>
   );
 
-  const renderLogin = () => (
+  const renderSignin = () => (
     <div className="space-y-4">
-      {targetUser && (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
-          <Avatar className="h-10 w-10">
-            {targetUser.profilePictureUrl ? <AvatarImage src={targetUser.profilePictureUrl} alt={targetUser.name} /> : null}
-            <AvatarFallback>{getInitials(targetUser.name)}</AvatarFallback>
-          </Avatar>
-          <div>
-            <p className="font-medium">{targetUser.name}</p>
-            {targetUser.title && <p className="text-sm text-muted-foreground">{targetUser.title}</p>}
-          </div>
-        </div>
-      )}
+      <div className="space-y-2">
+        <Label htmlFor="login-email">Email</Label>
+        <Input
+          id="login-email"
+          type="email"
+          autoComplete="username"
+          value={loginEmail}
+          onChange={(e) => setLoginEmail(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+          placeholder="you@commitagency.com"
+          autoFocus
+          data-testid="input-login-email"
+        />
+      </div>
       <div className="space-y-2">
         <Label htmlFor="login-password">Password</Label>
         <div className="relative">
           <Input
             id="login-password"
             type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
             placeholder="Enter your password"
-            autoFocus
+            data-testid="input-login-password"
           />
           <Button
             type="button" variant="ghost" size="icon"
@@ -446,22 +485,89 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </Button>
         </div>
-        <button
-          type="button"
-          className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
-          onClick={() => { setForgotEmail(targetUser?.email || ""); setForgotSubmitted(false); setView('forgot'); }}
-          data-testid="button-forgot-password"
-        >
-          Forgot password?
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            onClick={() => { setForgotEmail(loginEmail); setForgotSubmitted(false); setView('forgot'); }}
+            data-testid="button-forgot-password"
+          >
+            Forgot password?
+          </button>
+          <button
+            type="button"
+            className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2"
+            onClick={() => { setPassword(""); setView('signup'); }}
+            data-testid="button-new-member"
+          >
+            New team member?
+          </button>
+        </div>
+      </div>
+      <Button className="w-full" onClick={handleLogin} disabled={!loginEmail.trim() || !password || loginMutation.isPending} data-testid="button-sign-in">
+        {loginMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+        Sign In
+      </Button>
+      <Button variant="ghost" className="w-full text-muted-foreground" onClick={() => { window.location.href = getApiUrl("/auth/google?prompt=consent"); }} data-testid="button-force-relogin">
+        <RefreshCw className="w-4 h-4 mr-2" />Re-authenticate Google Account
+      </Button>
+    </div>
+  );
+
+  const renderSignup = () => (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="signup-name">Your name</Label>
+        <Input
+          id="signup-name"
+          value={signupName}
+          onChange={(e) => setSignupName(e.target.value)}
+          placeholder="Exactly as your admin added you"
+          autoFocus
+          data-testid="input-signup-name"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="signup-email">Email</Label>
+        <Input id="signup-email" type="email" value={setupEmail} onChange={(e) => setSetupEmail(e.target.value)} placeholder="you@commitagency.com" />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="signup-password">Create a password</Label>
+        <div className="relative">
+          <Input
+            id="signup-password"
+            type={showSetupPassword ? "text" : "password"}
+            value={setupPassword}
+            onChange={(e) => setSetupPassword(e.target.value)}
+            placeholder="At least 6 characters"
+          />
+          <Button
+            type="button" variant="ghost" size="icon"
+            className="absolute right-1 top-1 h-8 w-8 text-muted-foreground"
+            onClick={() => setShowSetupPassword(!showSetupPassword)}
+          >
+            {showSetupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </Button>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="signup-invite-code">Invite code</Label>
+        <Input
+          id="signup-invite-code"
+          value={setupInviteCode}
+          onChange={(e) => setSetupInviteCode(e.target.value.toUpperCase())}
+          onKeyDown={(e) => e.key === 'Enter' && handleSignup()}
+          placeholder="Enter your invite code"
+          className="uppercase tracking-widest"
+        />
       </div>
       <div className="flex gap-2 pt-2">
-        <Button variant="outline" className="flex-1" onClick={() => { setView('list'); setPassword(""); }}>
+        <Button variant="outline" className="flex-1" onClick={() => { setSetupPassword(""); setSetupInviteCode(""); setView('signin'); }}>
           <ArrowLeft className="w-4 h-4 mr-2" />Back
         </Button>
-        <Button className="flex-1" onClick={handleLogin} disabled={!password || loginMutation.isPending}>
-          {loginMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Sign In
+        <Button className="flex-1" onClick={handleSignup} disabled={signupMutation.isPending} data-testid="button-create-account">
+          {signupMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Create Account
         </Button>
       </div>
     </div>
@@ -478,18 +584,6 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
         </div>
       ) : (
         <>
-          {targetUser && (
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted">
-              <Avatar className="h-10 w-10">
-                {targetUser.profilePictureUrl ? <AvatarImage src={targetUser.profilePictureUrl} alt={targetUser.name} /> : null}
-                <AvatarFallback>{getInitials(targetUser.name)}</AvatarFallback>
-              </Avatar>
-              <div>
-                <p className="font-medium">{targetUser.name}</p>
-                {targetUser.title && <p className="text-sm text-muted-foreground">{targetUser.title}</p>}
-              </div>
-            </div>
-          )}
           <div className="space-y-2">
             <Label htmlFor="forgot-email">Email</Label>
             <Input
@@ -509,7 +603,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
         <Button
           variant="outline"
           className="flex-1"
-          onClick={() => { setView(targetUser?.hasPassword ? 'login' : 'list'); setForgotSubmitted(false); }}
+          onClick={() => { setView('signin'); setForgotSubmitted(false); }}
         >
           <ArrowLeft className="w-4 h-4 mr-2" />Back
         </Button>
@@ -626,7 +720,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
           </div>
         </div>
       </div>
-      {isCreate && selectedLocalUser?.role === 'super_admin' && localUsers.length > 0 && (
+      {selectedLocalUser?.role === 'super_admin' && localUsers.length > 0 && (
         <div className="space-y-2">
           <Label htmlFor="role">Role</Label>
           <Select value={newRole} onValueChange={setNewRole}>
@@ -722,8 +816,9 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   };
 
   const titleMap: Record<View, string> = {
-    list: isManageMode ? "Manage Team" : "Who's using the app?",
-    login: "Sign In",
+    list: "Manage Team",
+    signin: "Sign In",
+    signup: "New Team Member",
     setup: "Create Your Account",
     create: "Add Team Member",
     edit: "Edit Profile",
@@ -732,14 +827,20 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
   };
 
   const descMap: Record<View, string> = {
-    list: isManageMode ? "Add, edit, or remove team members" : "Select your name to continue",
-    login: "Enter your password to continue",
+    list: "Add, edit, or remove team members",
+    signin: "Sign in with your email and password",
+    signup: "Enter the invite code from your admin to create your account",
     setup: "First time? Create a password for your account",
     create: "Fill in the details for the new team member",
     edit: "Update profile info",
     invites: "Generate codes for new team members to set up their accounts",
     forgot: "We'll email you a link to set a new password",
   };
+
+  // Outside manage mode the "list" view is never shown: the login screen has no
+  // roster. On a true first run it becomes the add-your-name screen instead.
+  const shownView: View = view === 'list' && !isManageMode ? 'signin' : view;
+  const showBootstrap = shownView === 'signin' && !isManageMode && !selectedLocalUser && !!bootstrap?.needsBootstrap;
 
   return (
     <Dialog open={open} onOpenChange={handleCloseModal}>
@@ -750,24 +851,25 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
         onEscapeKeyDown={(e) => !isManageMode && e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle data-testid="text-modal-title">{titleMap[view]}</DialogTitle>
-          <DialogDescription>{descMap[view]}</DialogDescription>
+          <DialogTitle data-testid="text-modal-title">{titleMap[shownView]}</DialogTitle>
+          <DialogDescription>{descMap[shownView]}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
-          {isLoading ? (
+          {(isLoading || (shownView === 'signin' && bootstrapLoading)) ? (
             <div className="flex justify-center py-8">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
             </div>
           ) : (
             <>
-              {view === 'list' && renderList()}
-              {view === 'login' && renderLogin()}
-              {view === 'forgot' && renderForgot()}
-              {view === 'setup' && renderSetup()}
-              {view === 'create' && renderProfileForm(true)}
-              {view === 'edit' && renderProfileForm(false)}
-              {view === 'invites' && renderInvites()}
+              {shownView === 'list' && renderList()}
+              {shownView === 'signin' && (showBootstrap ? renderList() : renderSignin())}
+              {shownView === 'signup' && renderSignup()}
+              {shownView === 'forgot' && renderForgot()}
+              {shownView === 'setup' && renderSetup()}
+              {shownView === 'create' && renderProfileForm(true)}
+              {shownView === 'edit' && renderProfileForm(false)}
+              {shownView === 'invites' && renderInvites()}
             </>
           )}
         </div>

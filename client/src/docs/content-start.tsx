@@ -61,14 +61,14 @@ export const startArticles: Article[] = [
       <>
         <H2 id="log-in">Log in</H2>
         <Steps>
-          <li>On the "Who's using the app?" screen, click your name.</li>
-          <li>Enter your password and sign in.</li>
+          <li>On the sign in screen, enter your email and password.</li>
+          <li>Click <B>Sign In</B>.</li>
         </Steps>
         <P>Your session lasts 7 days, then you will be asked to sign in again.</P>
         <H2 id="create-account">Create an account</H2>
         <Steps>
           <li>Ask a super admin to generate an invite code for you.</li>
-          <li>On the login screen choose the create account option and enter your email, a password, and the invite code.</li>
+          <li>On the sign in screen click <B>New team member?</B> and enter your name (as the admin added you), your email, a password, and the invite code.</li>
           <li>Click <B>Create Account</B>.</li>
         </Steps>
         <P>Invite codes are single use. The only account that does not need one is the very first one, which becomes the super admin.</P>

@@ -806,7 +806,7 @@ export class DatabaseStorage implements IStorage {
 
   async getLocalUserByEmail(email: string): Promise<LocalUser | undefined> {
     const [user] = await db.select().from(localUsers)
-      .where(and(eq(localUsers.email, email), eq(localUsers.isActive, true)));
+      .where(and(sql`lower(${localUsers.email}) = ${email.trim().toLowerCase()}`, eq(localUsers.isActive, true)));
     return user || undefined;
   }
 
