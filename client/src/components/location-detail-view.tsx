@@ -676,11 +676,6 @@ export function LocationDetailView({
               </span>
             </div>
           )}
-          {(localOverrides.description !== undefined ? localOverrides.description : loc.description) && (
-            <p className="text-sm text-white/70 mt-3 leading-relaxed max-w-2xl" data-testid="detail-location-description">
-              {localOverrides.description ?? loc.description}
-            </p>
-          )}
         </div>
       </div>
 
