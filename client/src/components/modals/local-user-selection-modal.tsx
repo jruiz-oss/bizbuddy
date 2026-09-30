@@ -872,7 +872,7 @@ export function LocalUserSelectionModal({ open }: LocalUserSelectionModalProps) 
             <img
               src={logoPath}
               alt="BizBuddy"
-              className="h-44 w-auto object-contain mix-blend-multiply select-none"
+              className="h-[132px] w-auto object-contain mix-blend-multiply select-none"
               draggable={false}
               data-testid="img-signin-logo"
             />
