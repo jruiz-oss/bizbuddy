@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import type { Job, JobItem } from "@shared/schema";
 import { EventEmitter } from "events";
 import { notifyJobErrors } from "./job-failure-email";
+import { explainGoogleError, formatExplainedError, type GoogleOp } from "./google-errors";
 
 // Progress event emitter for real-time updates
 export const progressEmitter = new EventEmitter();
@@ -157,6 +158,13 @@ export async function processJob(jobId: string, options: JobProcessorOptions = d
   }
 }
 
+function jobOp(type: string): GoogleOp {
+  if (type === "posts") return "post";
+  if (type === "hours") return "hours";
+  if (type === "photo") return "photo";
+  return "other";
+}
+
 async function processJobItem(item: JobItem, job: Job, options: JobProcessorOptions, retryCount = 0): Promise<void> {
   try {
     // For MVP, simulate processing
@@ -171,9 +179,15 @@ async function processJobItem(item: JobItem, job: Job, options: JobProcessorOpti
     await storage.updateJobItem(item.id, { status: "success" });
     
   } catch (error) {
-    console.error(`Error processing job item ${item.id}:`, error);
-    
-    if (retryCount < options.maxRetries) {
+    console.error(`Error processing job item ${item.id} (${job.type}):`, error);
+
+    // Translate Google's raw error into a readable reason, and don't burn
+    // retries on errors that will fail identically every time (bad content,
+    // no access, expired auth...).
+    const explained = explainGoogleError(error, jobOp(job.type));
+    console.error(`   -> ${explained.code}: ${formatExplainedError(explained)}`);
+
+    if (explained.retryable && retryCount < options.maxRetries) {
       // Exponential backoff retry
       const delay = options.retryDelay * Math.pow(2, retryCount);
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -182,7 +196,7 @@ async function processJobItem(item: JobItem, job: Job, options: JobProcessorOpti
     } else {
       await storage.updateJobItem(item.id, { 
         status: "failed", 
-        errorText: error instanceof Error ? error.message : "Unknown error"
+        errorText: formatExplainedError(explained).slice(0, 500)
       });
     }
   }

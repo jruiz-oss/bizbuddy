@@ -808,7 +808,8 @@ class GoogleOAuthAuth {
       console.error('Error updating hours:', error);
       // Pass through detailed error message from Google API
       const errorMessage = error?.response?.data?.error?.message || error?.message || 'Failed to update hours';
-      throw new Error(errorMessage);
+      // Keep Google's structured response (status/code/details) so callers can classify it.
+      throw Object.assign(new Error(errorMessage), { response: { status: error?.response?.status, data: error?.response?.data }, code: error?.code });
     }
   }
 
@@ -872,7 +873,8 @@ class GoogleOAuthAuth {
     } catch (error: any) {
       console.error('❌ Error updating location details:', error);
       const errorMessage = error?.response?.data?.error?.message || error?.message || 'Failed to update location details';
-      throw new Error(errorMessage);
+      // Keep Google's structured response (status/code/details) so callers can classify it.
+      throw Object.assign(new Error(errorMessage), { response: { status: error?.response?.status, data: error?.response?.data }, code: error?.code });
     }
   }
 
@@ -1168,7 +1170,8 @@ class GoogleOAuthAuth {
       if (error?.response?.data) {
         console.error('❌ API Error details:', JSON.stringify(error.response.data, null, 2));
       }
-      throw new Error(errorMessage);
+      // Keep Google's structured response (status/code/details) so callers can classify it.
+      throw Object.assign(new Error(errorMessage), { response: { status: error?.response?.status, data: error?.response?.data }, code: error?.code });
     }
   }
 

@@ -81,6 +81,52 @@ interface SettingsProps {
   setSelectedClientId: (id: string) => void;
 }
 
+function JobErrorReport() {
+  const [enabled, setEnabled] = useState(false);
+  const { data, isFetching, error } = useQuery<{
+    totalFailedItems: number;
+    distinct: number;
+    unmapped: number;
+    report: { count: number; jobTypes: string[]; lastSeen: string; stored: string; code: string; translated: string }[];
+  }>({ queryKey: ["/api/admin/job-error-report"], enabled });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="space-y-0.5">
+          <Label className="text-sm font-medium">Failure history</Label>
+          <p className="text-sm text-muted-foreground">Every distinct error ever stored on a failed job item, and how it reads now. Super admins only.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setEnabled(true)} disabled={isFetching} data-testid="button-load-error-report">
+          {isFetching ? "Loading..." : data ? "Reload" : "Load report"}
+        </Button>
+      </div>
+      {error && <p className="text-sm text-red-600">{(error as Error).message}</p>}
+      {data && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            {data.totalFailedItems} failed items, {data.distinct} distinct errors, {data.unmapped} not yet translated.
+          </p>
+          <div className="max-h-[420px] overflow-auto space-y-2">
+            {data.report.map((r, i) => (
+              <div key={i} className="rounded-md border p-2 text-xs space-y-1">
+                <div className="flex gap-2 items-center">
+                  <Badge variant={r.code === "UNMAPPED" ? "destructive" : "secondary"}>{r.code}</Badge>
+                  <span>{r.count}x</span>
+                  <span className="text-muted-foreground">{r.jobTypes.join(", ")}</span>
+                  <span className="text-muted-foreground ml-auto">{new Date(r.lastSeen).toLocaleDateString()}</span>
+                </div>
+                <div><span className="font-semibold">Now reads:</span> {r.translated}</div>
+                <div className="text-muted-foreground break-words"><span className="font-semibold">Stored:</span> {r.stored}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Settings({ selectedClientId, setSelectedClientId }: SettingsProps) {
   const { toast } = useToast();
   const { showApiError } = useApiError();
@@ -1469,6 +1515,8 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                     Test Error Modal
                   </Button>
                 </div>
+                <Separator />
+                <JobErrorReport />
               </CardContent>
             </Card>
 

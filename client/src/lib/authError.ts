@@ -35,17 +35,18 @@ export function isGoogleAuthError(error: unknown): boolean {
 
   return (
     t.includes("invalid_grant") ||
-    t.includes("permission_denied") ||
     t.includes("unauthenticated") ||
     t.includes("invalid credentials") ||
     t.includes("invalid authentication") ||
     t.includes("token has been expired or revoked") ||
     t.includes("re-authenticate") ||
     t.includes("reauthenticate") ||
-    // A bare 401/403 from a route that talks to Google. Kept last so the
-    // app-session messages above win.
-    /\b(401|403)\b/.test(t)
+    t.includes("reconnect google") ||
+    t.includes("google connection")
   );
+  // Deliberately NOT matching bare 401/403 or PERMISSION_DENIED: our own routes
+  // return 403 for role checks, and Google returns it for "no access to this
+  // location". Neither is fixed by reconnecting Google.
 }
 
 /** True when the fix is "log back into BizBuddy", not "reconnect Google". */

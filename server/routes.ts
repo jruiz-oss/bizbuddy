@@ -20,6 +20,7 @@ import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
 import { validateGbpImage } from "./utils/image-dimensions";
+import { explainToText, explainGoogleError, formatExplainedError } from "./google-errors";
 import { detectSocialMediaDrift } from "./utils/social-drift";
 
 // Resolve the acting local user from the SERVER session (set at login).
@@ -37,10 +38,13 @@ function getLocalUserId(req: any): string | null {
 function isGoogleAuthError(errorText?: string | null): boolean {
   if (!errorText) return false;
   const t = errorText.toLowerCase();
+  // Bare 401/403 and PERMISSION_DENIED are NOT auth signals: Google returns them
+  // for "no access to this location", suspended listings, disabled APIs, etc.,
+  // where reconnecting does nothing. New job errors carry "Reconnect Google";
+  // the raw strings below cover older stored failures.
   return (
-    /\b(401|403)\b/.test(t) ||
+    t.includes("reconnect google") ||
     t.includes("unauthenticated") ||
-    t.includes("permission_denied") ||
     t.includes("invalid_grant") ||
     t.includes("invalid credentials") ||
     t.includes("invalid authentication") ||
@@ -865,6 +869,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Revoke Google auth tokens without destroying session. This disconnects the
   // SHARED connection for the whole team, so it is restricted to super_admins.
+  // Super-admin report of every distinct failure ever stored on a job item,
+  // with what the error translator makes of it. Rows marked UNMAPPED are the
+  // gaps: real failures we still show to people as raw Google text.
+  app.get("/api/admin/job-error-report", async (req, res) => {
+    try {
+      const localUserId = getLocalUserId(req);
+      const currentUser = localUserId ? await storage.getLocalUser(localUserId) : null;
+      if (!currentUser || currentUser.role !== 'super_admin') {
+        return res.status(403).json({ error: 'Only super admins can view the error report' });
+      }
+
+      const rows = await db
+        .select({ errorText: jobItems.errorText, type: jobs.type, at: jobItems.updatedAt })
+        .from(jobItems)
+        .innerJoin(jobs, eq(jobItems.jobId, jobs.id))
+        .where(eq(jobItems.status, "failed"))
+        .orderBy(desc(jobItems.updatedAt))
+        .limit(20000);
+
+      const groups = new Map<string, { raw: string; count: number; types: Set<string>; lastSeen: Date }>();
+      for (const r of rows) {
+        const raw = (r.errorText || "(empty)").slice(0, 600);
+        const g = groups.get(raw);
+        if (g) {
+          g.count++;
+          g.types.add(r.type);
+        } else {
+          groups.set(raw, { raw, count: 1, types: new Set([r.type]), lastSeen: r.at });
+        }
+      }
+
+      const report = Array.from(groups.values())
+        .map(g => {
+          const op = g.types.has("posts") ? "post" : g.types.has("hours") ? "hours" : g.types.has("photo") ? "photo" : "other";
+          const x = explainGoogleError(g.raw, op);
+          return {
+            count: g.count,
+            jobTypes: Array.from(g.types),
+            lastSeen: g.lastSeen,
+            stored: g.raw,
+            code: x.code,
+            translated: formatExplainedError(x),
+            retryable: x.retryable,
+            isAuth: x.isAuth,
+          };
+        })
+        .sort((a, b) => (a.code === "UNMAPPED" ? -1 : 0) - (b.code === "UNMAPPED" ? -1 : 0) || b.count - a.count);
+
+      res.json({ totalFailedItems: rows.length, distinct: report.length, unmapped: report.filter(r => r.code === "UNMAPPED").length, report });
+    } catch (error: any) {
+      console.error("Error building job error report:", error);
+      res.status(500).json({ error: error.message || "Failed to build error report" });
+    }
+  });
+
   app.post("/api/auth/revoke-google", async (req, res) => {
     try {
       const localUserId = getLocalUserId(req);
@@ -2284,7 +2343,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, message: gbpResult.message, skippedFields: gbpResult.skippedFields ?? [] });
     } catch (error: any) {
       console.error("Error reverting location info:", error);
-      res.status(500).json({ message: error.message || "Failed to revert location info" });
+      res.status(500).json({ message: explainToText(error, "location") });
     }
   });
 
@@ -2428,7 +2487,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: error.errors[0]?.message || 'Invalid request data' });
       }
       console.error('Error updating location details:', error);
-      res.status(500).json({ error: error.message || 'Failed to update location details' });
+      res.status(500).json({ error: explainToText(error, "location") });
     }
   });
 
@@ -4138,7 +4197,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true, message: "Post deleted successfully" });
     } catch (error: any) {
       console.error('❌ Delete post error:', error);
-      res.status(500).json({ message: error.message || "Failed to delete post" });
+      res.status(500).json({ message: explainToText(error, "post") });
     }
   });
 
@@ -4815,7 +4874,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error("Error accepting suggested edit:", error);
-      res.status(500).json({ message: error.message || "Failed to accept suggested edit" });
+      res.status(500).json({ message: explainToText(error, "update") });
     }
   });
 
@@ -4918,7 +4977,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error("Error undoing suggested edit:", error);
-      res.status(500).json({ message: error.message || "Failed to undo change" });
+      res.status(500).json({ message: explainToText(error, "update") });
     }
   });
 
@@ -5001,7 +5060,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.error("Error rejecting suggested edit:", error);
-      res.status(500).json({ message: error.message || "Failed to reject suggested edit" });
+      res.status(500).json({ message: explainToText(error, "update") });
     }
   });
 
