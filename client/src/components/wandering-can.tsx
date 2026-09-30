@@ -28,18 +28,24 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
 
   pausedRef.current = hovered || popped || stage !== "idle";
 
-  useEffect(() => {
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+
+  // Load the photo fresh on each click (not once on page load), so a failed
+  // load earlier never sticks. Rain lasts long enough for it to arrive.
+  const [photoSrc, setPhotoSrc] = useState(PHOTO);
+  const loadPhoto = () => {
+    const src = `${PHOTO}?t=${Date.now()}`;
     const img = new Image();
-    img.onload = () => setPhotoOk(true);
+    img.onload = () => { setPhotoSrc(src); setPhotoOk(true); };
     img.onerror = () => setPhotoOk(false);
-    img.src = PHOTO;
-    return () => timers.current.forEach(clearTimeout);
-  }, []);
+    img.src = src;
+  };
 
   const startShow = () => {
     setPopped(true);
     timers.current.push(window.setTimeout(() => setPopped(false), 900));
     if (stage !== "idle") return;
+    loadPhoto();
     setStage("rain");
     timers.current.push(window.setTimeout(() => setStage("reveal"), RAIN_MS));
   };
@@ -151,7 +157,7 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
                 <div
                   key={i}
                   style={{
-                    backgroundImage: photoOk ? `url(${PHOTO})` : "linear-gradient(135deg, #1e3a8a, #dc2626)",
+                    backgroundImage: photoOk ? `url(${photoSrc})` : "linear-gradient(135deg, #1e3a8a, #dc2626)",
                     backgroundSize: `${GRID * 100}% ${GRID * 100}%`,
                     backgroundPosition: `${(c / (GRID - 1)) * 100}% ${(r / (GRID - 1)) * 100}%`,
                     animation: `bb-block-in 450ms ease-out ${(r + c) * 70}ms both`,
@@ -177,7 +183,7 @@ export function WanderingCan({ src = "/redbullicon.png" }: { src?: string }) {
             data-testid="easter-egg-prize"
           >
             <div className="relative bg-white text-gray-900 text-sm font-semibold rounded-2xl px-4 py-2 shadow-lg border border-gray-200 hover:bg-yellow-50">
-              You found me! Click here for your prize
+              Wow you actually clicked the can. Prize inside
               <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-white" />
             </div>
           </a>

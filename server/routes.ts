@@ -1094,10 +1094,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = await getAgencyUserId();
       if (!userId) return res.status(404).end();
       const roster = await storage.getLocalUsersByUserId(userId);
+      const withPic = roster.filter(u => u.profilePictureUrl);
       const jorge =
-        roster.find(u => (u.email || "").toLowerCase() === "jruiz@commitagency.com" && u.profilePictureUrl) ||
-        roster.find(u => /^jorge\b/i.test(u.name || "") && u.profilePictureUrl);
+        withPic.find(u => (u.email || "").trim().toLowerCase() === "jruiz@commitagency.com") ||
+        withPic.find(u => (u.email || "").trim().toLowerCase().startsWith("jruiz@")) ||
+        withPic.find(u => /jorge/i.test(u.name || ""));
       const pic = jorge?.profilePictureUrl;
+      res.setHeader("Cache-Control", "no-store");
       if (!pic) return res.status(404).end();
       const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(pic);
       if (m) {
