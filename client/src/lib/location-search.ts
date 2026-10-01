@@ -38,7 +38,7 @@ function addressHasState(address: string, code: string): boolean {
   return new RegExp(`(^|[\\s,])${code}(?=$|[\\s,]|\\d)`, "i").test(address);
 }
 
-export function locationMatchesSearch(
+function termMatches(
   rawQuery: string,
   loc: { name?: string | null; address?: string | null; city?: string | null },
 ): boolean {
@@ -58,4 +58,19 @@ export function locationMatchesSearch(
   const codes = stateCodesForQuery(q);
   if (codes.some((c) => addressHasState(address, c))) return true;
   return address.toLowerCase().includes(q);
+}
+
+// Multi-term search: every word must match (name, city, address or state).
+// "smith az" -> locations with "smith" that are in Arizona.
+// The whole phrase is tried first so "new york" still works as a state.
+export function locationMatchesSearch(
+  rawQuery: string,
+  loc: { name?: string | null; address?: string | null; city?: string | null },
+): boolean {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return true;
+  if (termMatches(q, loc)) return true;
+  const terms = q.split(/\s+/);
+  if (terms.length < 2) return false;
+  return terms.every((t) => termMatches(t, loc));
 }
