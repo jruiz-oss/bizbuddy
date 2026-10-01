@@ -13,6 +13,7 @@ import { useLocation, Link as WouterLink } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import { isGoogleAuthError } from "@/lib/authError";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import { useJobProgress } from "@/hooks/use-job-progress";
@@ -446,8 +447,7 @@ export default function Hours({ selectedClientId, setSelectedClientId }: HoursPr
 
   // Filter locations based on search query
   const filteredLocations = displayLocations.filter(location => 
-    location.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (location.address && location.address.toLowerCase().includes(searchQuery.toLowerCase()))
+    locationMatchesSearch(searchQuery, location)
   );
 
   const allFilteredSelected = filteredLocations.length > 0 && filteredLocations.every(l => selectedLocations.has(l.id));

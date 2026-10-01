@@ -17,6 +17,7 @@ import { apiRequest, getApiUrl } from "@/lib/queryClient";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import type { Client, ClientLocation, LocationFolder } from "@shared/schema";
 
 interface ReviewsProps {
@@ -165,11 +166,7 @@ export default function Reviews({ selectedClientId, setSelectedClientId }: Revie
     }
     
     if (locationSearch.trim()) {
-      const search = locationSearch.toLowerCase();
-      result = result.filter(loc => 
-        loc.name.toLowerCase().includes(search) ||
-        (loc.address && loc.address.toLowerCase().includes(search))
-      );
+      result = result.filter(loc => locationMatchesSearch(locationSearch, loc));
     }
     
     return result;

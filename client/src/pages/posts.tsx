@@ -14,6 +14,7 @@ import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import { isGoogleAuthError } from "@/lib/authError";
 import { useJobProgress } from "@/hooks/use-job-progress";
 import { formatScheduledDateTime } from "@/lib/formatDate";
@@ -418,8 +419,7 @@ export default function Posts({ selectedClientId, setSelectedClientId }: PostsPr
 
   // Filter by search
   const filteredLocations = displayedLocations.filter((location) => 
-    location.name.toLowerCase().includes(locationSearch.toLowerCase()) ||
-    location.address?.toLowerCase().includes(locationSearch.toLowerCase())
+    locationMatchesSearch(locationSearch, location)
   );
 
   // Clear selections from locations not in current display when folder/tag filters change

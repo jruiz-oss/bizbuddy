@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient, useIsMutating, useMutationState 
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import { isGoogleAuthError } from "@/lib/authError";
 import { apiRequest, queryClient, getApiUrl } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
@@ -419,12 +420,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const filteredLocations = useMemo(() => {
     return baseLocations.filter((loc) => {
       const matchesClient = clientFilter === "all" || loc.clientId === clientFilter;
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        !q ||
-        loc.name.toLowerCase().includes(q) ||
-        (loc.city || "").toLowerCase().includes(q) ||
-        (loc.address || "").toLowerCase().includes(q);
+      const matchesSearch = locationMatchesSearch(searchQuery, loc);
       const matchesStatus = statusFilter === "all" || pinStatusFor(loc, clientById.get(loc.clientId)) === statusFilter;
       const matchesFolder =
         folderFilter === "all" || folderFilter === "hidden" || folderLocations.some((fl) => fl.id === loc.id);

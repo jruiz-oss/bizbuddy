@@ -13,6 +13,7 @@ import { useApiError } from "@/contexts/api-error-context";
 import { useScanProgress } from "@/contexts/scan-progress-context";
 import { ScanStatusBanner } from "@/components/scan-status-banner";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import { isGoogleAuthError } from "@/lib/authError";
 import { queryClient, apiRequest, getApiUrl } from "@/lib/queryClient";
 import {
@@ -406,12 +407,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   const filteredLocations = (() => {
     const q = locationFilterQuery.trim().toLowerCase();
     if (!q) return selectableLocations;
-    return selectableLocations.filter(
-      (loc) =>
-        (loc.name || "").toLowerCase().includes(q) ||
-        (loc.address || "").toLowerCase().includes(q) ||
-        (loc.city || "").toLowerCase().includes(q)
-    );
+    return selectableLocations.filter((loc) => locationMatchesSearch(q, loc));
   })();
 
   const filteredFolders = (() => {

@@ -12,6 +12,7 @@ import { Share2, Search, Folder, Loader2, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useApiError } from "@/contexts/api-error-context";
 import { parseApiError } from "@/lib/parseApiError";
+import { locationMatchesSearch } from "@/lib/location-search";
 import { isGoogleAuthError } from "@/lib/authError";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { SiX, SiFacebook, SiInstagram, SiYoutube, SiLinkedin, SiTiktok, SiPinterest } from "react-icons/si";
@@ -124,8 +125,7 @@ export default function SocialMedia({ selectedClientId, setSelectedClientId }: S
   })();
 
   const filteredLocations = displayLocations.filter(location =>
-    location.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (location.address && location.address.toLowerCase().includes(searchQuery.toLowerCase()))
+    locationMatchesSearch(searchQuery, location)
   );
 
   const allFilteredSelected = filteredLocations.length > 0 && filteredLocations.every(l => selectedLocations.has(l.id));
