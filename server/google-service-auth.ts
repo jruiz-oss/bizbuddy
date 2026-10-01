@@ -15,6 +15,12 @@ const SOCIAL_ATTRIBUTE_CANDIDATES: Record<string, string[]> = {
 };
 
 // OAuth Authentication - User login required
+// Fields we ask Google for when checking suggested edits. specialHours, moreHours,
+// openInfo and serviceItems are in here so those suggestions aren't silently missed.
+const SUGGESTED_EDIT_READ_MASK = 'name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,specialHours,moreHours,openInfo,serviceItems,profile,categories,latlng,metadata';
+// Same fields on the current (live) location so the scanner can compare like for like.
+const ORIGINAL_LOCATION_READ_MASK = SUGGESTED_EDIT_READ_MASK;
+
 class GoogleOAuthAuth {
   private oauth2Client: any;
   private mybusinessaccountmanagement: any;
@@ -1335,7 +1341,7 @@ class GoogleOAuthAuth {
   }
 
   // Get a specific location with full metadata (including hasGoogleUpdated)
-  async getLocation(locationName: string) {
+  async getLocation(locationName: string, readMask: string = 'name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,metadata,openInfo,profile,categories,latlng') {
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1345,7 +1351,7 @@ class GoogleOAuthAuth {
       
       const response: any = await this.mybusinessbusinessinformation.locations.get({
         name: locationName,
-        readMask: 'name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,metadata,openInfo,profile,categories,latlng'
+        readMask
       });
       
       return response.data;
@@ -1361,7 +1367,8 @@ class GoogleOAuthAuth {
       throw new Error('User not authenticated. Please log in first.');
     }
     
-    const location = await this.getLocation(locationName);
+    // Extended mask so the scanner can diff the extra fields in SUGGESTED_EDIT_READ_MASK
+    const location = await this.getLocation(locationName, ORIGINAL_LOCATION_READ_MASK);
     const hasGoogleUpdated = location?.metadata?.hasGoogleUpdated || false;
     return {
       hasUpdates: hasGoogleUpdated,
@@ -1380,7 +1387,7 @@ class GoogleOAuthAuth {
       
       // Use the getGoogleUpdated endpoint
       const token = (await this.oauth2Client.getAccessToken()).token;
-      const readMask = 'name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,profile,categories,latlng,metadata';
+      const readMask = SUGGESTED_EDIT_READ_MASK;
       const apiUrl = `https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}:getGoogleUpdated?readMask=${encodeURIComponent(readMask)}`;
       
       const response = await fetch(apiUrl, {
@@ -1410,6 +1417,24 @@ class GoogleOAuthAuth {
     } catch (error: any) {
       console.error('❌ Error getting Google updates:', error.message || error);
       return null;
+    }
+  }
+
+  // PROBE ONLY (no behavior change): checks whether Google exposes pending attribute
+  // changes (parking, paid parking, etc.) for a flagged location. Result is logged so
+  // we can see it in the server logs; nothing is surfaced in the UI yet.
+  async probeGoogleUpdatedAttributes(locationName: string) {
+    try {
+      const token = (await this.oauth2Client.getAccessToken()).token;
+      const apiUrl = `https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}/attributes:getGoogleUpdated`;
+      const response = await fetch(apiUrl, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const body = await response.text();
+      console.log(`🧪 [attributes probe] ${locationName} -> ${response.status}: ${body.substring(0, 1500)}`);
+    } catch (error: any) {
+      console.log(`🧪 [attributes probe] ${locationName} failed: ${error?.message || error}`);
     }
   }
 

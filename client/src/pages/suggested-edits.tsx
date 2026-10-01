@@ -69,6 +69,7 @@ const FIELD_LABELS: Record<string, string> = {
   specialHours: 'Special Hours',
   moreHours: 'More Hours',
   openInfo: 'Business Status',
+  serviceItems: 'Services',
   profile: 'Business Profile',
   categories: 'Business Categories',
   metadata: 'Other Updates',
@@ -649,6 +650,60 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
     }
 
     const fieldLower = fieldName.toLowerCase();
+
+    // Special hours (holiday / one-off dates)
+    if (fieldLower === "specialhours" && Array.isArray(value?.specialHourPeriods)) {
+      const fmtDate = (d?: { year?: number; month?: number; day?: number }) =>
+        d ? `${d.month ?? "?"}/${d.day ?? "?"}/${d.year ?? ""}` : "";
+      return (
+        <div className="space-y-2">
+          {value.specialHourPeriods.map((p: any, idx: number) => (
+            <div key={idx} className="flex items-start gap-4 py-2 border-b border-gray-100 last:border-0">
+              <span className="font-medium text-gray-700 w-28">{fmtDate(p.startDate)}</span>
+              <span className="text-gray-600">
+                {p.closed ? "Closed" : `${formatTime(p.openTime, "12:00 AM")} – ${formatTime(p.closeTime, "")}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // More hours (happy hour, delivery, pickup, etc.)
+    if (fieldLower === "morehours" && Array.isArray(value)) {
+      return (
+        <div className="space-y-4">
+          {value.map((mh: any, idx: number) => (
+            <div key={idx}>
+              <p className="font-medium text-gray-700 mb-1">
+                {(mh.hoursTypeId || "Hours").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c: string) => c.toUpperCase())}
+              </p>
+              {(mh.periods || []).map((p: any, i: number) => (
+                <div key={i} className="text-gray-600 text-sm">
+                  {(p.openDay || "").charAt(0) + (p.openDay || "").slice(1).toLowerCase()}: {formatTime(p.openTime, "12:00 AM")} – {formatTime(p.closeTime, "")}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Services / menu items
+    if (fieldLower === "serviceitems" && Array.isArray(value)) {
+      return (
+        <div className="flex flex-wrap gap-2">
+          {value.map((item: any, idx: number) => {
+            const label =
+              item.structuredServiceItem?.description ||
+              item.freeFormServiceItem?.label?.displayName ||
+              item.structuredServiceItem?.serviceTypeId ||
+              "Service";
+            return <Badge key={idx} variant="secondary">{label}</Badge>;
+          })}
+        </div>
+      );
+    }
 
     // Format regular hours
     if (fieldLower.includes("hours") && value?.periods) {

@@ -416,6 +416,8 @@ async function checkLocation(
       const suggestedUpdate = await withQuotaRetry(() =>
         googleOAuthAuth.getGoogleUpdatedLocation(locationName),
       );
+      // Fire-and-forget: log whether Google exposes pending attribute changes (parking etc.)
+      googleOAuthAuth.probeGoogleUpdatedAttributes?.(locationName);
       const originalLoc = checkResult.location || {};
       const suggestedLoc = suggestedUpdate?.location || {};
       let diffMask: string = suggestedUpdate?.diffMask || "";
@@ -442,6 +444,9 @@ async function checkLocation(
           "profile",
           "categories",
           "openInfo",
+          "specialHours",
+          "moreHours",
+          "serviceItems",
         ];
         const computedFields: string[] = [];
         for (const field of comparableFields) {
