@@ -30,6 +30,7 @@ import { HoursEditorModal } from "@/components/modals/hours-editor-modal";
 import { PostCreationModal } from "@/components/modals/post-creation-modal";
 import { PhotoUploadModal } from "@/components/modals/photo-upload-modal";
 import { FolderManagementModal } from "@/components/modals/folder-management-modal";
+import { ImportLocationsModal } from "@/components/modals/import-locations-modal";
 import { AddToFolderModal } from "@/components/modals/add-to-folder-modal";
 import { TagManagementModal } from "@/components/modals/tag-management-modal";
 import { AddToTagModal } from "@/components/modals/add-to-tag-modal";
@@ -213,6 +214,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
   const [showPostModal, setShowPostModal] = useState(false);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [showFolderManagementModal, setShowFolderManagementModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showAddToFolderModal, setShowAddToFolderModal] = useState(false);
   const [showTagManagementModal, setShowTagManagementModal] = useState(false);
   const [showAddToTagModal, setShowAddToTagModal] = useState(false);
@@ -747,11 +749,10 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
               </div>
               <Button
                 size="sm"
-                onClick={() => syncMutation.mutate()}
-                disabled={isSyncing}
+                onClick={() => setShowImportModal(true)}
                 data-testid="button-add-location"
               >
-                {isSyncing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <MapPin className="w-4 h-4 mr-2" />}
+                <MapPin className="w-4 h-4 mr-2" />
                 + Add location
               </Button>
               <Button
@@ -1215,6 +1216,7 @@ export default function Locations({ selectedClientId, setSelectedClientId }: Loc
       <PostCreationModal open={showPostModal} onClose={() => setShowPostModal(false)} clientId={selectedClientId} selectedLocationIds={Array.from(selectedLocations)} />
       <PhotoUploadModal open={showPhotoModal} onClose={() => setShowPhotoModal(false)} clientId={selectedClientId} selectedLocationIds={Array.from(selectedLocations)} />
       <FolderManagementModal open={showFolderManagementModal} onClose={() => setShowFolderManagementModal(false)} />
+      <ImportLocationsModal open={showImportModal} onClose={() => setShowImportModal(false)} />
       <AddToFolderModal open={showAddToFolderModal} onClose={() => { setShowAddToFolderModal(false); setSelectedLocations(new Set()); }} selectedLocationIds={Array.from(selectedLocations)} />
       <TagManagementModal open={showTagManagementModal} onClose={() => setShowTagManagementModal(false)} />
       <AddToTagModal open={showAddToTagModal} onClose={() => { setShowAddToTagModal(false); setSelectedLocations(new Set()); }} selectedLocationIds={Array.from(selectedLocations)} />

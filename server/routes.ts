@@ -1902,6 +1902,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ───────── Untracked Google locations (picker behind "+ Add location") ─────────
+  // The sync deliberately skips locations whose parent account isn't in the clients
+  // table. These two routes let a person see those locations and import the ones they want.
+  const mapGoogleLocationFields = (location: any) => {
+    let status = 'unknown';
+    const googleStatus = location.openInfo?.status?.toUpperCase();
+    if (googleStatus === 'OPEN') status = 'active';
+    else if (googleStatus === 'CLOSED_TEMPORARILY') status = 'temporarily_closed';
+    else if (googleStatus === 'CLOSED_PERMANENTLY') status = 'permanently_closed';
+    const gbpLat = location.latlng?.latitude;
+    const gbpLng = location.latlng?.longitude;
+    const fields: any = {
+      gbpLocationId: location.name,
+      name: location.title || 'Unnamed Location',
+      address: location.storefrontAddress
+        ? `${location.storefrontAddress.addressLines?.join(', ') || ''}, ${location.storefrontAddress.locality || ''}, ${location.storefrontAddress.administrativeArea || ''}`.trim()
+        : '',
+      city: location.storefrontAddress?.locality || '',
+      phone: location.phoneNumbers?.primaryPhone || '',
+      website: location.websiteUri || '',
+      description: location.profile?.description || null,
+      regularHours: location.regularHours || null,
+      googleLocationId: location.name,
+      zipCode: location.storefrontAddress?.postalCode || '',
+      categories: Array.isArray(location.categories) ? location.categories.map((c: any) => c.displayName).join(', ') : '',
+      isVerified: true,
+      status,
+      editPending: !!location.metadata?.hasPendingEdits,
+      updatedAt: new Date(),
+    };
+    if (typeof gbpLat === 'number' && typeof gbpLng === 'number') {
+      fields.latitude = String(gbpLat);
+      fields.longitude = String(gbpLng);
+    }
+    return fields;
+  };
+
+  app.get("/api/locations/untracked", async (req, res) => {
+    try {
+      const { googleOAuthAuth } = await import("./google-service-auth");
+      if (!googleOAuthAuth.isAuthenticated()) {
+        return res.status(401).json({ error: 'Not authenticated. Please log in.' });
+      }
+      if (!req.session.userId) {
+        return res.status(401).json({ error: 'No user session found. Please log in again.' });
+      }
+
+      const accounts = await googleOAuthAuth.getAccounts();
+      const accountNames = new Map<string, string>(
+        accounts.map((a: any) => [a.name?.split('/').pop() || a.name, a.accountName || a.name]),
+      );
+      const allLocations = await googleOAuthAuth.getAllLocations();
+
+      const untracked: any[] = [];
+      for (const location of allLocations) {
+        const parts = (location.name || '').split('/');
+        const accountId = parts.length >= 4 ? parts[1] : '';
+        const locationId = location.name?.split('/').pop() || location.name;
+        if (!accountId || !locationId) continue;
+        if (await storage.getLocation(locationId)) continue;
+        const fields = mapGoogleLocationFields(location);
+        const existingClient = await storage.getClient(accountId);
+        untracked.push({
+          locationName: location.name,
+          title: fields.name,
+          address: fields.address,
+          phone: fields.phone,
+          status: fields.status,
+          accountId,
+          accountName: existingClient?.name || accountNames.get(accountId) || null,
+          accountTracked: !!existingClient,
+        });
+      }
+      res.json({ locations: untracked, totalFromGoogle: allLocations.length });
+    } catch (error: any) {
+      console.error('❌ Error listing untracked locations:', error);
+      res.status(500).json({ error: 'Failed to load locations from Google', message: error.message });
+    }
+  });
+
+  app.post("/api/locations/import", async (req, res) => {
+    try {
+      const { googleOAuthAuth } = await import("./google-service-auth");
+      if (!googleOAuthAuth.isAuthenticated()) {
+        return res.status(401).json({ error: 'Not authenticated. Please log in.' });
+      }
+      const userId = req.session.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'No user session found. Please log in again.' });
+      }
+      const wanted = new Set<string>(Array.isArray(req.body?.locationNames) ? req.body.locationNames : []);
+      if (wanted.size === 0) {
+        return res.status(400).json({ error: 'No locations selected' });
+      }
+
+      const accounts = await googleOAuthAuth.getAccounts();
+      const accountNames = new Map<string, string>(
+        accounts.map((a: any) => [a.name?.split('/').pop() || a.name, a.accountName || a.name]),
+      );
+      const allLocations = await googleOAuthAuth.getAllLocations();
+
+      let imported = 0;
+      let createdClients = 0;
+      const locationsNeedingGeocode: Array<{ id: string; address: string }> = [];
+
+      for (const location of allLocations) {
+        if (!wanted.has(location.name)) continue;
+        const parts = (location.name || '').split('/');
+        const accountId = parts.length >= 4 ? parts[1] : '';
+        const locationId = location.name?.split('/').pop() || location.name;
+        if (!accountId || !locationId) continue;
+        if (await storage.getLocation(locationId)) continue;
+
+        if (!(await storage.getClient(accountId))) {
+          await storage.createClient({
+            id: accountId,
+            userId,
+            name: accountNames.get(accountId) || `Google account ${accountId}`,
+            type: 'PERSONAL',
+          } as any);
+          await storage.upsertClientSettings({
+            clientId: accountId,
+            timezone: 'America/Phoenix',
+            enableScheduledPosts: false,
+            postsCron: '0 9 1,15 * *',
+            enableScheduledHours: false,
+            hoursCron: '0 9 1 */2 *',
+          });
+          createdClients++;
+        }
+
+        const fields = mapGoogleLocationFields(location);
+        await storage.createLocation({ id: locationId, clientId: accountId, ...fields });
+        imported++;
+        if (fields.latitude == null) {
+          locationsNeedingGeocode.push({ id: locationId, address: fields.address });
+        }
+      }
+
+      if (locationsNeedingGeocode.length > 0) {
+        const { geocodeQueue } = await import("./utils/geocode");
+        geocodeQueue.enqueueMany(locationsNeedingGeocode.map((j) => ({ locationId: j.id, address: j.address })));
+      }
+
+      console.log(`✅ Imported ${imported} location(s), created ${createdClients} client(s)`);
+      res.json({ success: true, imported, createdClients });
+    } catch (error: any) {
+      console.error('❌ Error importing locations:', error);
+      res.status(500).json({ error: 'Failed to import locations', message: error.message });
+    }
+  });
+
   // Manual trigger for GBP performance data sync
   app.post("/api/sync/performance", async (req, res) => {
     try {
