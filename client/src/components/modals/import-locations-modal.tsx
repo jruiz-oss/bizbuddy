@@ -35,7 +35,7 @@ export function ImportLocationsModal({ open, onClose }: ImportLocationsModalProp
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
 
-  const { data, isLoading, error, refetch } = useQuery<{ locations: UntrackedLocation[]; totalFromGoogle: number }>({
+  const { data, isLoading, error, refetch } = useQuery<{ locations: UntrackedLocation[]; totalFromGoogle: number; inDb?: { visible: number; hidden: number; otherUser: number } }>({
     queryKey: ["/api/locations/untracked"],
     queryFn: async () => (await apiRequest("GET", "/api/locations/untracked")).json(),
     enabled: open,
@@ -114,7 +114,12 @@ export function ImportLocationsModal({ open, onClose }: ImportLocationsModalProp
           </div>
         ) : locations.length === 0 ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
-            Nothing new. All {data?.totalFromGoogle ?? 0} locations Google returned are already in BizBuddy.
+            <p>Nothing new. All {data?.totalFromGoogle ?? 0} locations Google returned are already in BizBuddy.</p>
+            {data?.inDb && (
+              <p className="mt-2">
+                {data.inDb.visible} shown on the Locations page, {data.inDb.hidden} hidden, {data.inDb.otherUser} under another user's clients.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-3">

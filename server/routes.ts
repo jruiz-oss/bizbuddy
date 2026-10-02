@@ -1956,12 +1956,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const allLocations = await googleOAuthAuth.getAllLocations();
 
       const untracked: any[] = [];
+      // Why "already in BizBuddy" can be more than the Locations page shows: the page
+      // only lists non-hidden locations under clients owned by the logged-in user.
+      const inDb = { visible: 0, hidden: 0, otherUser: 0 };
+      const clientOwners = new Map<string, string | null>();
       for (const location of allLocations) {
         const parts = (location.name || '').split('/');
         const accountId = parts.length >= 4 ? parts[1] : '';
         const locationId = location.name?.split('/').pop() || location.name;
         if (!accountId || !locationId) continue;
-        if (await storage.getLocation(locationId)) continue;
+        const existingRow = await storage.getLocation(locationId);
+        if (existingRow) {
+          if (!clientOwners.has(existingRow.clientId)) {
+            clientOwners.set(existingRow.clientId, (await storage.getClient(existingRow.clientId))?.userId ?? null);
+          }
+          if (clientOwners.get(existingRow.clientId) !== req.session.userId) inDb.otherUser++;
+          else if (existingRow.hidden) inDb.hidden++;
+          else inDb.visible++;
+          continue;
+        }
         const fields = mapGoogleLocationFields(location);
         const existingClient = await storage.getClient(accountId);
         untracked.push({
@@ -1975,7 +1988,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           accountTracked: !!existingClient,
         });
       }
-      res.json({ locations: untracked, totalFromGoogle: allLocations.length });
+      res.json({ locations: untracked, totalFromGoogle: allLocations.length, inDb });
     } catch (error: any) {
       console.error('❌ Error listing untracked locations:', error);
       res.status(500).json({ error: 'Failed to load locations from Google', message: error.message });
