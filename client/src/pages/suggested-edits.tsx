@@ -69,6 +69,9 @@ const FIELD_LABELS: Record<string, string> = {
   specialHours: 'Special Hours',
   moreHours: 'More Hours',
   openInfo: 'Business Status',
+  'openInfo.status': 'Business Status',
+  'openInfo.openingDate': 'Opening Date',
+  'openInfo.canReopen': 'Can Reopen',
   serviceItems: 'Services',
   profile: 'Business Profile',
   categories: 'Business Categories',
@@ -76,7 +79,27 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 function getFieldLabel(fieldName: string): string {
-  return FIELD_LABELS[fieldName] || fieldName.replace(/([A-Z])/g, ' $1').trim();
+  if (FIELD_LABELS[fieldName]) return FIELD_LABELS[fieldName];
+  // Nested paths like "openInfo.openingDate": label by the last segment, title-cased
+  const last = fieldName.split('.').pop() || fieldName;
+  const words = last.replace(/([A-Z])/g, ' $1').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// Google date objects ({year, month, day}) -> "May 10, 2011"
+function formatGoogleDate(d: any): string | null {
+  if (!d || typeof d !== 'object' || !d.year) return null;
+  const date = new Date(d.year, (d.month || 1) - 1, d.day || 1);
+  if (isNaN(date.getTime())) return null;
+  return d.day
+    ? date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    : date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+}
+
+// "CLOSED_PERMANENTLY" -> "Closed permanently"
+function formatEnumLabel(v: string): string {
+  const t = v.replace(/_/g, ' ').toLowerCase();
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 export default function SuggestedEdits({ selectedClientId, setSelectedClientId }: SuggestedEditsProps) {
@@ -650,6 +673,21 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       }
     }
 
+    // Opening date / business status (openInfo.*): readable text instead of raw JSON
+    if (fieldLower.startsWith("openinfo")) {
+      const asDate = formatGoogleDate(value);
+      if (asDate) return asDate;
+      if (typeof value === "string") return formatEnumLabel(value);
+      if (typeof value === "boolean") return value ? "Yes" : "No";
+      if (value && typeof value === "object") {
+        const parts: string[] = [];
+        if (typeof value.status === "string") parts.push(formatEnumLabel(value.status));
+        const od = formatGoogleDate(value.openingDate);
+        if (od) parts.push(`Opening date: ${od}`);
+        if (parts.length > 0) return parts.join(" · ");
+      }
+    }
+
     // Services preview: list the service names instead of raw JSON
     if (fieldLower === "serviceitems" && Array.isArray(value)) {
       if (value.length === 0) return "No services";
@@ -708,6 +746,12 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
           ))}
         </div>
       );
+    }
+
+    // Opening date / business status
+    if (fieldLower.startsWith("openinfo")) {
+      const text = getFieldPreview(fieldName, value);
+      if (text && !text.startsWith("{")) return <p className="text-gray-700">{text}</p>;
     }
 
     // Services / menu items
