@@ -18,6 +18,7 @@ import { db } from "./db";
 import { storage } from "./storage";
 import { clientLocations, suggestedEditScans } from "@shared/schema";
 import { eq, inArray, desc, and, lt } from "drizzle-orm";
+import { toLocationResource } from "./utils/gbp-location-name";
 
 export type ScanStatus =
   | "running"
@@ -402,10 +403,7 @@ async function checkLocation(
   googleOAuthAuth: any,
 ): Promise<ScanResult | { __error: true; message: string } | null> {
   try {
-    let locationName = location.gbpLocationId;
-    if (!locationName.startsWith("locations/")) {
-      locationName = `locations/${locationName}`;
-    }
+    const locationName = toLocationResource(location.gbpLocationId);
 
     const checkResult = await withQuotaRetry(() =>
       googleOAuthAuth.checkForGoogleUpdates(locationName),
