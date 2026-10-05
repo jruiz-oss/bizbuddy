@@ -704,6 +704,7 @@ class GoogleOAuthAuth {
 
   // Get current hours from Google to verify updates
   async getCurrentHours(locationName: string) {
+    locationName = toLocationResource(locationName);
     try {
       const response = await this.mybusinessbusinessinformation.locations.get({
         name: locationName,
@@ -719,6 +720,7 @@ class GoogleOAuthAuth {
 
   // Update location hours
   async updateHours(locationName: string, hoursData: any) {
+    locationName = toLocationResource(locationName);
     try {
       console.log(`🕐 Updating hours for location: ${locationName}`);
       
@@ -859,6 +861,7 @@ class GoogleOAuthAuth {
     website?: string; 
     description?: string;
   }) {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -930,6 +933,7 @@ class GoogleOAuthAuth {
 
     // The Business Information API only accepts "locations/{id}". Stored IDs can be the
     // full "accounts/{acct}/locations/{id}" form, which Google answers with a 404.
+    const originalLocationName = locationName;
     locationName = toLocationResource(locationName);
 
     const updateFields: string[] = [];
@@ -979,7 +983,11 @@ class GoogleOAuthAuth {
     let revertedSocialCount = 0;
     if (Object.keys(socialUpdates).length > 0) {
       try {
-        await this.updateSocialMediaUrls(locationName, socialUpdates as any);
+        await this.updateSocialMediaUrls(
+          locationName,
+          socialUpdates as any,
+          originalLocationName.startsWith('accounts/') ? originalLocationName : undefined,
+        );
         revertedSocialCount = Object.keys(socialUpdates).length;
         console.log(`↩️ Reverted ${revertedSocialCount} social media field(s) for: ${locationName}`);
       } catch (err: any) {
@@ -1037,6 +1045,8 @@ class GoogleOAuthAuth {
     tiktok?: string;
     pinterest?: string;
   }, fullLocationName?: string) {
+    if (!fullLocationName && locationName.startsWith('accounts/')) fullLocationName = locationName;
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1225,6 +1235,7 @@ class GoogleOAuthAuth {
   // set, so the activity log can flag it and offer a revert just like it does for
   // name/phone/website/description.
   async getSocialMediaUrls(locationName: string): Promise<Record<string, string>> {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1380,6 +1391,7 @@ class GoogleOAuthAuth {
 
   // Get a specific location with full metadata (including hasGoogleUpdated)
   async getLocation(locationName: string, readMask: string = 'name,title,storefrontAddress,phoneNumbers,websiteUri,regularHours,metadata,openInfo,profile,categories,latlng') {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1416,6 +1428,7 @@ class GoogleOAuthAuth {
 
   // Get Google-suggested updates for a location
   async getGoogleUpdatedLocation(locationName: string) {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1462,6 +1475,7 @@ class GoogleOAuthAuth {
   // changes (parking, paid parking, etc.) for a flagged location. Result is logged so
   // we can see it in the server logs; nothing is surfaced in the UI yet.
   async probeGoogleUpdatedAttributes(locationName: string) {
+    locationName = toLocationResource(locationName);
     try {
       const token = (await this.oauth2Client.getAccessToken()).token;
       const apiUrl = `https://mybusinessbusinessinformation.googleapis.com/v1/${locationName}/attributes:getGoogleUpdated`;
@@ -1478,6 +1492,7 @@ class GoogleOAuthAuth {
 
   // Accept Google-suggested update by applying the suggested changes
   async acceptGoogleUpdate(locationName: string, suggestedLocation: any, diffMask: string) {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1556,6 +1571,7 @@ class GoogleOAuthAuth {
 
   // Reject Google-suggested update (clear the pending update flag)
   async rejectGoogleUpdate(locationName: string, diffMask: string) {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
@@ -1661,6 +1677,7 @@ class GoogleOAuthAuth {
 
   // Fetch GBP Performance Metrics for a location from the Performance API
   async getLocationPerformanceMetrics(locationName: string, startDate: Date, endDate: Date) {
+    locationName = toLocationResource(locationName);
     if (!this.isAuthenticated()) {
       throw new Error('User not authenticated. Please log in first.');
     }
