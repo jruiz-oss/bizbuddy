@@ -564,6 +564,21 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
   // Day order for sorting
   const dayOrder = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"];
 
+  // Readable name for one Google service item (free-form or structured)
+  const getServiceItemLabel = (item: any): string => {
+    const free = item?.freeFormServiceItem?.label?.displayName;
+    if (free) return free;
+    const structured = item?.structuredServiceItem;
+    if (structured?.description) return structured.description;
+    if (structured?.serviceTypeId) {
+      // e.g. "job_type_id:house_cleaning" -> "House cleaning"
+      const raw = String(structured.serviceTypeId).split(":").pop() || "";
+      const words = raw.replace(/[_-]+/g, " ").trim();
+      if (words) return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+    return "Service";
+  };
+
   // Helper function to create a brief preview of a field value
   const getFieldPreview = (fieldName: string, value: any): string => {
     if (value === null || value === undefined) return "No value";
@@ -635,6 +650,12 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       }
     }
 
+    // Services preview: list the service names instead of raw JSON
+    if (fieldLower === "serviceitems" && Array.isArray(value)) {
+      if (value.length === 0) return "No services";
+      return value.map(getServiceItemLabel).join(", ");
+    }
+
     // Default: stringify and truncate
     if (typeof value === "object") {
       return JSON.stringify(value).substring(0, 80);
@@ -694,11 +715,7 @@ export default function SuggestedEdits({ selectedClientId, setSelectedClientId }
       return (
         <div className="flex flex-wrap gap-2">
           {value.map((item: any, idx: number) => {
-            const label =
-              item.structuredServiceItem?.description ||
-              item.freeFormServiceItem?.label?.displayName ||
-              item.structuredServiceItem?.serviceTypeId ||
-              "Service";
+            const label = getServiceItemLabel(item);
             return <Badge key={idx} variant="secondary">{label}</Badge>;
           })}
         </div>
