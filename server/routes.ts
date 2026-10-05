@@ -18,6 +18,7 @@ import { db } from "./db";
 import { eq, and, or, desc, inArray, gte, lte, sql } from "drizzle-orm";
 import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
+import { toLocationResource } from "./utils/gbp-location-name";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
 import { validateGbpImage } from "./utils/image-dimensions";
 import { explainToText, explainGoogleError, formatExplainedError } from "./google-errors";
@@ -2875,9 +2876,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (isAuthenticated && location.gbpLocationId) {
             try {
               // Build the location name for Google API (format: "locations/{locationId}")
-              const locationName = location.gbpLocationId.startsWith('locations/') 
-                ? location.gbpLocationId 
-                : `locations/${location.gbpLocationId}`;
+              const locationName = toLocationResource(location.gbpLocationId);
 
               // Full resource path needed by the pre-flight attributes endpoint
               const accountId = location.clientId.startsWith('accounts/')
@@ -4706,8 +4705,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const loc = testLocations[0];
-      let locationName = loc.gbpLocationId;
-      if (!locationName.startsWith('locations/')) locationName = `locations/${locationName}`;
+      const locationName = toLocationResource(loc.gbpLocationId);
 
       // Try the raw getLocation call
       let locationResult: any = null;
@@ -4950,10 +4948,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Construct the full location name
-      let locationName = location.gbpLocationId;
-      if (!locationName.startsWith('locations/')) {
-        locationName = `locations/${locationName}`;
-      }
+      const locationName = toLocationResource(location.gbpLocationId);
 
       const checkResult = await googleOAuthAuth.checkForGoogleUpdates(locationName);
       

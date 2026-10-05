@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import { toLocationResource } from './utils/gbp-location-name';
 
 // Google Business Profile "attributes" API names for each social platform we support.
 // Twitter/X may be exposed as either url_x (new) or url_twitter (legacy) depending on
@@ -929,8 +930,7 @@ class GoogleOAuthAuth {
 
     // The Business Information API only accepts "locations/{id}". Stored IDs can be the
     // full "accounts/{acct}/locations/{id}" form, which Google answers with a 404.
-    const locMatch = locationName.match(/locations\/[^/]+$/);
-    if (locMatch) locationName = locMatch[0];
+    locationName = toLocationResource(locationName);
 
     const updateFields: string[] = [];
     const requestBody: any = {};
