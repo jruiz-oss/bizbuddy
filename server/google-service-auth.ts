@@ -466,6 +466,39 @@ class GoogleOAuthAuth {
         }
       } while (pageToken);
       
+      // The wildcard endpoint sometimes returns bare "locations/{id}" names with no account
+      // prefix. Every caller derives the account from "accounts/{a}/locations/{l}", so a bare
+      // name made the whole location get silently skipped (sync "0 new, 0 updated", and the
+      // Add-locations picker saying "all already in BizBuddy"). Re-attach the account here.
+      const unresolved = allLocations.filter((l) => !/^accounts\/[^/]+\/locations\/[^/]+/.test(l.name || ''));
+      if (unresolved.length > 0) {
+        console.warn(`⚠️ ${unresolved.length} of ${allLocations.length} locations came back without an account prefix — resolving via per-account lists`);
+        const idToAccount = new Map<string, string>();
+        try {
+          const accounts: any[] = await this.getAccounts();
+          for (const account of accounts) {
+            if (!account?.name) continue;
+            const perAccount = await this.getLocations(account.name);
+            for (const loc of perAccount) {
+              const id = (loc.name || '').split('/').pop();
+              if (id) idToAccount.set(id, account.name);
+            }
+          }
+        } catch (err) {
+          console.error('Error resolving account for unprefixed locations:', err);
+        }
+        let stillUnresolved = 0;
+        for (const loc of unresolved) {
+          const id = (loc.name || '').split('/').pop();
+          const accountName = id ? idToAccount.get(id) : undefined;
+          if (accountName && id) loc.name = `${accountName}/locations/${id}`;
+          else stillUnresolved++;
+        }
+        if (stillUnresolved > 0) {
+          console.warn(`⚠️ ${stillUnresolved} locations still have no account after per-account lookup`);
+        }
+      }
+
       console.log(`✅ Successfully fetched ${allLocations.length} TOTAL locations across all accounts`);
       return allLocations;
     } catch (error) {
