@@ -927,6 +927,11 @@ class GoogleOAuthAuth {
       throw new Error('User not authenticated. Please log in first.');
     }
 
+    // The Business Information API only accepts "locations/{id}". Stored IDs can be the
+    // full "accounts/{acct}/locations/{id}" form, which Google answers with a 404.
+    const locMatch = locationName.match(/locations\/[^/]+$/);
+    if (locMatch) locationName = locMatch[0];
+
     const updateFields: string[] = [];
     const requestBody: any = {};
     const skippedFields: string[] = [];
