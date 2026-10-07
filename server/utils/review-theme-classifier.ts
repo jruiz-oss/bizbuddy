@@ -2,21 +2,23 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Large groups (500+ reviews/month) blow past the output limit if sent in one call,
+// which truncates the JSON and loses every theme. Classify in small batches instead.
+const BATCH_SIZE = 40;
+const MAX_TOKENS = 4096;
+
 export interface ReviewForClassification {
   index: number;
   comment: string;
 }
 
 /**
- * Classify a batch of review comments against a list of theme labels,
- * and also discover additional themes not in the list.
- *
- * Each review gets:
- *   - matched user-defined themes (from the provided list)
- *   - AI-discovered themes it noticed that weren't covered (prefixed with "* " in the sheet)
- *
- * If themes list is empty, runs in discovery-only mode.
+ * Classify review comments against a list of user-defined theme labels.
+ * Only themes from the provided list are kept (case-insensitive match).
+ * If the themes list is empty, nothing is classified (returns an empty map).
  * If ANTHROPIC_API_KEY is not set, returns an empty map (safe no-op).
+ *
+ * Runs in batches; a failed batch is logged and skipped, other batches still count.
  */
 export async function classifyReviewThemes(
   reviews: ReviewForClassification[],
@@ -25,20 +27,25 @@ export async function classifyReviewThemes(
   const result = new Map<number, string[]>();
 
   if (!process.env.ANTHROPIC_API_KEY) return result;
+  if (themes.length === 0) return result;
 
-  // Only classify reviews that have actual comment text
   const reviewsWithComments = reviews.filter(r => r.comment && r.comment.trim().length > 3);
   if (reviewsWithComments.length === 0) return result;
 
-  const reviewsText = reviewsWithComments
-    .map(r => `[${r.index}] "${r.comment.trim()}"`)
-    .join("\n\n");
+  const validThemesLower = new Map(themes.map(t => [t.toLowerCase(), t] as const));
+  const userThemesSection = `Your defined themes:\n${themes.map((t, i) => `${i + 1}. ${t}`).join("\n")}\n\n`;
 
-  const userThemesSection = themes.length > 0
-    ? `Your defined themes:\n${themes.map((t, i) => `${i + 1}. ${t}`).join("\n")}\n\n`
-    : "";
+  let failedBatches = 0;
+  let totalBatches = 0;
 
-  const prompt = `You are classifying customer reviews by theme.
+  for (let start = 0; start < reviewsWithComments.length; start += BATCH_SIZE) {
+    totalBatches++;
+    const batch = reviewsWithComments.slice(start, start + BATCH_SIZE);
+    const reviewsText = batch
+      .map(r => `[${r.index}] "${r.comment.trim()}"`)
+      .join("\n\n");
+
+    const prompt = `You are classifying customer reviews by theme.
 
 ${userThemesSection}For each review, match any of the defined themes above that clearly apply (use exact spelling). Only include a theme if there is clear evidence in the review text. Return [] if nothing applies. Do NOT invent or add themes beyond the defined list.
 
@@ -50,38 +57,45 @@ Respond with a JSON object where keys are review index numbers (as strings) and 
 
 Return ONLY the JSON object, no other text.`;
 
-  try {
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = message.content[0].type === "text" ? message.content[0].text.trim() : "";
-
-    // Strip markdown code fences if present
-    const jsonText = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
-    const parsed: Record<string, string[]> = JSON.parse(jsonText);
-
-    const validThemesLower = new Set(themes.map(t => t.toLowerCase()));
-
-    for (const [idxStr, matchedThemes] of Object.entries(parsed)) {
-      const idx = parseInt(idxStr, 10);
-      if (isNaN(idx) || !Array.isArray(matchedThemes)) continue;
-
-      const valid = matchedThemes.filter(t => {
-        if (typeof t !== "string") return false;
-        // Only keep user-defined themes (case-insensitive)
-        return validThemesLower.has(t.toLowerCase());
+    try {
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: MAX_TOKENS,
+        messages: [{ role: "user", content: prompt }],
       });
 
-      if (valid.length > 0) result.set(idx, valid);
-    }
+      if (message.stop_reason === "max_tokens") {
+        throw new Error("response hit max_tokens and was truncated");
+      }
 
-    console.log(`🏷️  [Theme classifier] Classified ${reviewsWithComments.length} reviews against themes: [${themes.join(", ")}]`);
-  } catch (err) {
-    console.error("❌ [Theme classifier] Failed to classify reviews:", err);
-    // Non-fatal — email/sheet still sends without themes
+      const text = message.content[0]?.type === "text" ? message.content[0].text.trim() : "";
+      const jsonText = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+      const parsed: Record<string, string[]> = JSON.parse(jsonText);
+
+      for (const [idxStr, matchedThemes] of Object.entries(parsed)) {
+        const idx = parseInt(idxStr, 10);
+        if (isNaN(idx) || !Array.isArray(matchedThemes)) continue;
+
+        // Only keep user-defined themes, mapped back to their exact spelling
+        const valid = matchedThemes
+          .filter((t): t is string => typeof t === "string")
+          .map(t => validThemesLower.get(t.toLowerCase()))
+          .filter((t): t is string => !!t);
+
+        if (valid.length > 0) result.set(idx, valid);
+      }
+    } catch (err) {
+      failedBatches++;
+      console.error(`❌ [Theme classifier] Batch ${totalBatches} (${batch.length} reviews) failed:`, err);
+      // Non-fatal — email/sheet still sends, those reviews just have no themes
+    }
+  }
+
+  const summary = `${reviewsWithComments.length} reviews in ${totalBatches} batch(es), ${result.size} tagged, ${failedBatches} failed batch(es)`;
+  if (failedBatches > 0) {
+    console.error(`⚠️  [Theme classifier] INCOMPLETE: ${summary} | themes: [${themes.join(", ")}]`);
+  } else {
+    console.log(`🏷️  [Theme classifier] ${summary} | themes: [${themes.join(", ")}]`);
   }
 
   return result;

@@ -2,6 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Batched so big groups don't truncate the JSON reply and lose every category.
+const BATCH_SIZE = 40;
+const MAX_TOKENS = 4096;
+
 export type ReviewCategory = "Shop" | "Donate" | "Other";
 
 export interface ReviewForCategorization {
@@ -36,11 +40,18 @@ export async function classifyReviewCategories(
   );
   if (reviewsWithComments.length === 0) return result;
 
-  const reviewsText = reviewsWithComments
-    .map((r) => `[${r.index}] "${r.comment.trim()}"`)
-    .join("\n\n");
+  const valid = new Set<ReviewCategory>(["Shop", "Donate", "Other"]);
+  let failedBatches = 0;
+  let totalBatches = 0;
 
-  const prompt = `You are categorizing customer reviews of a thrift/charity retail organization (e.g. Goodwill). Each location both SELLS donated goods and ACCEPTS donations, so a review can be about either side.
+  for (let start = 0; start < reviewsWithComments.length; start += BATCH_SIZE) {
+    totalBatches++;
+    const batch = reviewsWithComments.slice(start, start + BATCH_SIZE);
+    const reviewsText = batch
+      .map((r) => `[${r.index}] "${r.comment.trim()}"`)
+      .join("\n\n");
+
+    const prompt = `You are categorizing customer reviews of a thrift/charity retail organization (e.g. Goodwill). Each location both SELLS donated goods and ACCEPTS donations, so a review can be about either side.
 
 Assign each review to EXACTLY ONE category:
 - "Shop"   → about the shopping/retail experience: prices, selection, finds, checkout, store layout, cleanliness, staff helping customers buy.
@@ -57,44 +68,48 @@ Respond with a JSON object where keys are review index numbers (as strings) and 
 
 Return ONLY the JSON object, no other text.`;
 
-  try {
-    const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
+    try {
+      const message = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: MAX_TOKENS,
+        messages: [{ role: "user", content: prompt }],
+      });
 
-    const text =
-      message.content[0].type === "text" ? message.content[0].text.trim() : "";
+      if (message.stop_reason === "max_tokens") {
+        throw new Error("response hit max_tokens and was truncated");
+      }
 
-    // Strip markdown code fences if present
-    const jsonText = text
-      .replace(/^```(?:json)?\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
-    const parsed: Record<string, string> = JSON.parse(jsonText);
+      const text =
+        message.content[0]?.type === "text" ? message.content[0].text.trim() : "";
+      const jsonText = text
+        .replace(/^```(?:json)?\n?/, "")
+        .replace(/\n?```$/, "")
+        .trim();
+      const parsed: Record<string, string> = JSON.parse(jsonText);
 
-    const valid = new Set<ReviewCategory>(["Shop", "Donate", "Other"]);
-
-    for (const [idxStr, cat] of Object.entries(parsed)) {
-      const idx = parseInt(idxStr, 10);
-      if (isNaN(idx)) continue;
-      if (typeof cat !== "string") continue;
-      // Normalize casing (e.g. "shop" -> "Shop")
-      const normalized = (cat.charAt(0).toUpperCase() +
-        cat.slice(1).toLowerCase()) as ReviewCategory;
-      if (valid.has(normalized)) result.set(idx, normalized);
+      for (const [idxStr, cat] of Object.entries(parsed)) {
+        const idx = parseInt(idxStr, 10);
+        if (isNaN(idx)) continue;
+        if (typeof cat !== "string") continue;
+        const normalized = (cat.charAt(0).toUpperCase() +
+          cat.slice(1).toLowerCase()) as ReviewCategory;
+        if (valid.has(normalized)) result.set(idx, normalized);
+      }
+    } catch (err) {
+      failedBatches++;
+      console.error(
+        `❌ [Category classifier] Batch ${totalBatches} (${batch.length} reviews) failed:`,
+        err,
+      );
+      // Non-fatal — caller defaults uncategorized reviews to "Other"
     }
+  }
 
-    console.log(
-      `🗂️  [Category classifier] Categorized ${reviewsWithComments.length} reviews into Shop/Donate/Other`,
-    );
-  } catch (err) {
-    console.error(
-      "❌ [Category classifier] Failed to categorize reviews:",
-      err,
-    );
-    // Non-fatal — caller defaults uncategorized reviews to "Other"
+  const summary = `${reviewsWithComments.length} reviews in ${totalBatches} batch(es), ${result.size} categorized, ${failedBatches} failed batch(es)`;
+  if (failedBatches > 0) {
+    console.error(`⚠️  [Category classifier] INCOMPLETE: ${summary}`);
+  } else {
+    console.log(`🗂️  [Category classifier] ${summary}`);
   }
 
   return result;
