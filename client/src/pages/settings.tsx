@@ -634,7 +634,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   Notifications
                 </CardTitle>
                 <CardDescription>
-                  Get an email when a bulk job fails
+                  Get an email when something fails or only partly goes through
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -642,7 +642,7 @@ export default function Settings({ selectedClientId, setSelectedClientId }: Sett
                   <div className="space-y-0.5">
                     <Label className="text-sm font-medium">Error Notifications</Label>
                     <p className="text-sm text-gray-600 dark:text-gray-400">
-                      Email the address below when a bulk post, hours or photo job fails or partly fails
+                      Email the address below when a bulk post, hours or photo job, a social link update, a suggested edits scan, or a nightly sync fails or partly fails
                     </p>
                   </div>
                   <Switch 

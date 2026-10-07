@@ -19,6 +19,7 @@ import { eq, and, or, desc, inArray, gte, lte, sql } from "drizzle-orm";
 import { put as blobPut } from "@vercel/blob";
 import { sendEmail, sendHtmlEmail, sendTextEmail } from "./gmail-service";
 import { toLocationResource } from "./utils/gbp-location-name";
+import { notifyError } from "./error-notify";
 import { generateReviewEmailHtml } from "./utils/review-email-template";
 import { validateGbpImage } from "./utils/image-dimensions";
 import { explainToText, explainGoogleError, formatExplainedError } from "./google-errors";
@@ -2873,6 +2874,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           
           // Also push to Google Business Profile if authenticated
           let googleUpdated = false;
+          let googleFailure: string | undefined;
           if (isAuthenticated && location.gbpLocationId) {
             try {
               // Build the location name for Google API (format: "locations/{locationId}")
@@ -2889,11 +2891,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               console.log(`✅ Updated Google for location: ${location.name}`);
             } catch (googleError: any) {
               console.error(`⚠️ Failed to update Google for ${location.name}:`, googleError.message);
+              googleFailure = explainToText(googleError, "update");
               // Continue even if Google update fails - local DB is already updated
             }
+          } else if (!location.gbpLocationId) {
+            googleFailure = "This location has no Google Business Profile ID saved.";
           }
           
-          return { id, name: location?.name || id, success: true, googleUpdated };
+          return { id, name: location?.name || id, success: true, googleUpdated, googleFailure };
         })
       );
       
@@ -2906,6 +2911,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const firstLocation = await storage.getLocation(locationIds[0]);
         if (firstLocation) {
           const socialStatus = googleUpdatedCount < locationIds.length ? "partial" : "success";
+          // Saved locally but not pushed to Google: tell the owner which ones and why.
+          const notSynced = results.filter((r: any) => r.success && !r.googleUpdated);
+          if (notSynced.length > 0) {
+            void notifyError({
+              source: "bulk-social",
+              clientId: firstLocation.clientId,
+              subject:
+                googleUpdatedCount === 0
+                  ? "BizBuddy: Social link update did not reach Google"
+                  : `BizBuddy: Social link update only reached ${googleUpdatedCount} of ${locationIds.length} locations`,
+              intro:
+                googleUpdatedCount === 0
+                  ? "The social links were saved in BizBuddy but none of them were pushed to Google."
+                  : `The social links were saved in BizBuddy, but ${notSynced.length} of ${locationIds.length} locations were not updated on Google.`,
+              rows: notSynced.map((r: any) => ({ name: r.name, reason: r.googleFailure || "Unknown error" })),
+              linkPath: "/social-media",
+              linkLabel: "Open Social Media",
+            });
+          }
           await storage.createActivityLog({
             clientId: firstLocation.clientId,
             action: "bulk_social_media_updated",

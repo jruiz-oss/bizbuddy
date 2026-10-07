@@ -12,6 +12,7 @@ import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref
 import { classifyReviewThemes } from "./utils/review-theme-classifier";
 import { classifyReviewCategories } from "./utils/review-category-classifier";
 import { detectSocialMediaDrift } from "./utils/social-drift";
+import { notifyError, cleanErrorText } from "./error-notify";
 import fs from "fs";
 import path from "path";
 
@@ -133,6 +134,15 @@ export function initializeScheduler() {
       await syncLocationsFromGoogle();
     } catch (error: any) {
       console.error("❌ [Daily Sync] Scheduled sync failed:", error);
+      void notifyError({
+        source: "daily-sync",
+        dedupeKey: "daily-sync",
+        subject: "BizBuddy: Daily location sync failed",
+        intro: "The daily location sync from Google did not complete.",
+        rows: [{ name: "Error", reason: cleanErrorText(error?.message || error) }],
+        linkPath: "/settings",
+        linkLabel: "Open Settings",
+      });
       const errMsg = String(error?.message || error?.response?.data?.error || error || "");
       const errStatus = error?.response?.status ?? error?.status;
       const isInvalidGrant =
@@ -527,9 +537,27 @@ export async function syncPerfData() {
     }
 
     console.log(`📊 [Perf Sync] Done — ${successCount} locations synced, ${errorCount} errors${firstError ? ` (first error: ${firstError})` : ""}`);
+    // A few locations without access are normal noise. Email only when a real share fails.
+    const total = successCount + errorCount;
+    if (errorCount > 0 && total > 0 && errorCount / total >= 0.25) {
+      void notifyError({
+        source: "perf-sync",
+        dedupeKey: "perf-sync",
+        subject: `BizBuddy: Performance sync had ${errorCount} errors`,
+        intro: `The nightly performance sync failed for ${errorCount} of ${total} locations.`,
+        rows: [{ name: "First error", reason: firstError || "Unknown error" }],
+      });
+    }
     return { success: true, successCount, errorCount, firstError };
   } catch (error: any) {
     console.error("❌ [Perf Sync] Sync failed:", error);
+    void notifyError({
+      source: "perf-sync",
+      dedupeKey: "perf-sync",
+      subject: "BizBuddy: Performance sync failed",
+      intro: "The nightly performance sync did not run.",
+      rows: [{ name: "Error", reason: cleanErrorText(error?.message || error) }],
+    });
     return { success: false, reason: error?.message || String(error) };
   }
 }

@@ -19,6 +19,7 @@ import { storage } from "./storage";
 import { clientLocations, suggestedEditScans } from "@shared/schema";
 import { eq, inArray, desc, and, lt } from "drizzle-orm";
 import { toLocationResource } from "./utils/gbp-location-name";
+import { notifyError, cleanErrorText } from "./error-notify";
 
 export type ScanStatus =
   | "running"
@@ -515,13 +516,37 @@ async function finish(
   // final batch is in flight and cancelScan writes "cancelled", then the loop
   // falls through and writes "success" over it — reporting a completed scan the
   // user explicitly stopped. Same for a row the sweep marked "interrupted".
-  await db
+  const applied = await db
     .update(suggestedEditScans)
     .set({ ...fields, status, completedAt: new Date(), heartbeatAt: new Date() })
-    .where(and(eq(suggestedEditScans.id, scanId), eq(suggestedEditScans.status, "running")));
+    .where(and(eq(suggestedEditScans.id, scanId), eq(suggestedEditScans.status, "running")))
+    .returning({ id: suggestedEditScans.id });
   activeScans.delete(scanId);
   const row = await getScan(scanId);
   if (row) scanProgressEmitter.emit(`scan:${scanId}`, toProgress(row));
+
+  // Tell the owner when a scan failed outright or finished with location errors.
+  // Only when this call actually ended the run (not a Stop or an interrupted sweep).
+  if (applied.length > 0 && (status === "failed" || status === "partial")) {
+    const scanned = (fields as any).scannedCount ?? row?.scannedCount ?? 0;
+    const errored = (fields as any).erroredCount ?? row?.erroredCount ?? 0;
+    const reason = cleanErrorText((fields as any).firstError ?? row?.firstError ?? "Unknown error");
+    void notifyError({
+      source: "scan",
+      dedupeKey: `scan:${scanId}`,
+      subject:
+        status === "failed"
+          ? "BizBuddy: Suggested edits scan failed"
+          : `BizBuddy: Suggested edits scan finished with ${errored} error${errored === 1 ? "" : "s"}`,
+      intro:
+        status === "failed"
+          ? `The suggested edits scan failed after checking ${scanned} location${scanned === 1 ? "" : "s"}.`
+          : `The suggested edits scan checked ${scanned} locations, but ${errored} of them could not be checked.`,
+      rows: [{ name: "First error", reason }],
+      linkPath: "/suggested-edits",
+      linkLabel: "Open Suggested Edits",
+    });
+  }
 }
 
 /**
