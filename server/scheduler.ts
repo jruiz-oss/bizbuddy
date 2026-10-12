@@ -12,6 +12,7 @@ import { generateStarsHtml, generateLocationCopyText, generateLocationMailtoHref
 import { classifyReviewThemes } from "./utils/review-theme-classifier";
 import { classifyReviewCategories } from "./utils/review-category-classifier";
 import { detectSocialMediaDrift } from "./utils/social-drift";
+import { getGbpPhone } from "./utils/gbp-phone";
 import { notifyError, cleanErrorText } from "./error-notify";
 import fs from "fs";
 import path from "path";
@@ -641,7 +642,7 @@ export async function syncLocationsFromGoogle() {
         ? `${location.storefrontAddress.addressLines?.join(', ') || ''}, ${location.storefrontAddress.locality || ''}, ${location.storefrontAddress.administrativeArea || ''}`.trim()
         : '',
       city: location.storefrontAddress?.locality || '',
-      phone: location.phoneNumbers?.primaryPhone || '',
+      phone: getGbpPhone(location),
       website: location.websiteUri || '',
       description: location.profile?.description || null,
       regularHours: location.regularHours || null,

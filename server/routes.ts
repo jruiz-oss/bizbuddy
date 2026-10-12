@@ -24,6 +24,7 @@ import { generateReviewEmailHtml } from "./utils/review-email-template";
 import { validateGbpImage } from "./utils/image-dimensions";
 import { explainToText, explainGoogleError, formatExplainedError } from "./google-errors";
 import { detectSocialMediaDrift } from "./utils/social-drift";
+import { getGbpPhone } from "./utils/gbp-phone";
 
 // Resolve the acting local user from the SERVER session (set at login).
 // Never trust the client-supplied X-Local-User-Id header for authorization —
@@ -1731,7 +1732,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           address: location.storefrontAddress ?
             `${location.storefrontAddress.addressLines?.join(', ') || ''}, ${location.storefrontAddress.locality || ''}, ${location.storefrontAddress.administrativeArea || ''}`.trim() : '',
           city: location.storefrontAddress?.locality || '',
-          phone: location.phoneNumbers?.primaryPhone || location.phoneNumbers?.[0]?.number || '',
+          phone: getGbpPhone(location),
           website: location.websiteUri || '',
           description: location.profile?.description || null,
           regularHours: location.regularHours || null,
@@ -1922,7 +1923,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? `${location.storefrontAddress.addressLines?.join(', ') || ''}, ${location.storefrontAddress.locality || ''}, ${location.storefrontAddress.administrativeArea || ''}`.trim()
         : '',
       city: location.storefrontAddress?.locality || '',
-      phone: location.phoneNumbers?.primaryPhone || '',
+      phone: getGbpPhone(location),
       website: location.websiteUri || '',
       description: location.profile?.description || null,
       regularHours: location.regularHours || null,
@@ -2199,7 +2200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                     city: location.storefrontAddress?.locality || '',
                     googleLocationId: location.name,
                     zipCode: location.storefrontAddress?.postalCode || '',
-                    phone: location.phoneNumbers?.[0]?.number || '',
+                    phone: getGbpPhone(location),
                     website: location.websiteUri || '',
                     categories: Array.isArray(location.categories) ? location.categories.map((c: any) => c.displayName).join(', ') : '',
                     averageRating: location.averageRating || null,
@@ -3049,7 +3050,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ...locationData,
           googleLocationId: location.name, // Alias for backward compatibility
           zipCode: location.storefrontAddress?.postalCode || '',
-          phone: location.phoneNumbers?.[0]?.number || '',
+          phone: getGbpPhone(location),
           website: location.websiteUri || '',
           categories: Array.isArray(location.categories) ? location.categories.map((c: any) => c.displayName).join(', ') : '',
           averageRating: location.averageRating || null,
