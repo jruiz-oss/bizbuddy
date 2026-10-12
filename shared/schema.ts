@@ -146,7 +146,7 @@ export const activityLog = pgTable("activity_log", {
 
 export const dismissedDashboardItems = pgTable("dismissed_dashboard_items", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  itemType: text("item_type").notNull(), // 'job' | 'activity'
+  itemType: text("item_type").notNull(), // 'job' | 'activity' | 'missing_info'
   itemId: varchar("item_id").notNull(),
   dismissedByUserId: varchar("dismissed_by_user_id").references(() => users.id),
   dismissedAt: timestamp("dismissed_at").defaultNow().notNull(),

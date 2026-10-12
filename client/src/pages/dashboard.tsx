@@ -83,7 +83,7 @@ export default function Dashboard({
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
 
-  const { data: dismissedData } = useQuery<{ jobs: string[]; activity: string[] }>({
+  const { data: dismissedData } = useQuery<{ jobs: string[]; activity: string[]; missingInfo?: string[] }>({
     queryKey: ["/api/dashboard/dismissed"],
     queryFn: async () => {
       const r = await fetch(getApiUrl(`/api/dashboard/dismissed?_t=${Date.now()}`), { cache: "no-store", credentials: "include" });
@@ -101,19 +101,25 @@ export default function Dashboard({
     () => new Set<string>(dismissedData?.activity ?? []),
     [dismissedData?.activity],
   );
+  const dismissedMissingInfoIds = useMemo(
+    () => new Set<string>(dismissedData?.missingInfo ?? []),
+    [dismissedData?.missingInfo],
+  );
 
   const dismissMutation = useMutation({
-    mutationFn: async ({ type, id }: { type: "job" | "activity"; id: string }) => {
-      return apiRequest("POST", "/api/dashboard/dismissed", { type, id });
+    mutationFn: async ({ type, id, ids }: { type: "job" | "activity" | "missing_info"; id?: string; ids?: string[] }) => {
+      return apiRequest("POST", "/api/dashboard/dismissed", { type, id, ids });
     },
-    onMutate: async ({ type, id }) => {
+    onMutate: async ({ type, id, ids }) => {
       await queryClient.cancelQueries({ queryKey: ["/api/dashboard/dismissed"] });
-      const prev = queryClient.getQueryData<{ jobs: string[]; activity: string[] }>(["/api/dashboard/dismissed"]);
-      queryClient.setQueryData<{ jobs: string[]; activity: string[] }>(
+      const prev = queryClient.getQueryData<{ jobs: string[]; activity: string[]; missingInfo?: string[] }>(["/api/dashboard/dismissed"]);
+      const added = ids ?? (id ? [id] : []);
+      queryClient.setQueryData<{ jobs: string[]; activity: string[]; missingInfo?: string[] }>(
         ["/api/dashboard/dismissed"],
         {
-          jobs: type === "job" ? [...(prev?.jobs ?? []), id] : (prev?.jobs ?? []),
-          activity: type === "activity" ? [...(prev?.activity ?? []), id] : (prev?.activity ?? []),
+          jobs: type === "job" ? [...(prev?.jobs ?? []), ...added] : (prev?.jobs ?? []),
+          activity: type === "activity" ? [...(prev?.activity ?? []), ...added] : (prev?.activity ?? []),
+          missingInfo: type === "missing_info" ? [...(prev?.missingInfo ?? []), ...added] : (prev?.missingInfo ?? []),
         },
       );
       return { prev };
@@ -316,7 +322,7 @@ export default function Dashboard({
   const failedJobs = jobs.filter((j) => j.status === "failed");
   const partialJobs = jobs.filter((j) => j.status === "partial");
   const locationsWithMissingData = locations.filter(
-    (l) => !l.address || !(l as any).phone
+    (l) => (!l.address || !(l as any).phone) && !dismissedMissingInfoIds.has(l.id)
   );
 
   const upcomingPosts = jobs
@@ -511,6 +517,10 @@ export default function Dashboard({
         subtitle: "Address or phone fields are empty",
         actionLabel: "Edit",
         onClick: () => setShowMissingDataDialog(true),
+        onDismiss: (e) => {
+          e.stopPropagation();
+          dismissMutation.mutate({ type: "missing_info", ids: locationsWithMissingData.map((l) => l.id) });
+        },
       });
     }
 

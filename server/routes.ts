@@ -2348,12 +2348,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const items = await storage.getDismissedDashboardItems();
       const jobs: string[] = [];
       const activity: string[] = [];
+      const missingInfo: string[] = [];
       for (const item of items) {
         if (item.itemType === "job") jobs.push(item.itemId);
         else if (item.itemType === "activity") activity.push(item.itemId);
+        else if (item.itemType === "missing_info") missingInfo.push(item.itemId);
       }
       res.setHeader("Cache-Control", "no-store");
-      res.json({ jobs, activity });
+      res.json({ jobs, activity, missingInfo });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
     }
@@ -2361,12 +2363,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/dashboard/dismissed", async (req, res) => {
     try {
-      const { type, id } = req.body || {};
-      if ((type !== "job" && type !== "activity") || !id || typeof id !== "string") {
-        return res.status(400).json({ message: "type ('job'|'activity') and id required" });
+      const { type, id, ids } = req.body || {};
+      if (type !== "job" && type !== "activity" && type !== "missing_info") {
+        return res.status(400).json({ message: "type ('job'|'activity'|'missing_info') required" });
+      }
+      const targets: string[] = Array.isArray(ids) ? ids : id ? [id] : [];
+      if (targets.length === 0 || targets.some((t) => typeof t !== "string" || !t)) {
+        return res.status(400).json({ message: "id or ids required" });
       }
       const userId = (req.session as any)?.userId ?? null;
-      await storage.addDismissedDashboardItem(type, id, userId);
+      for (const target of targets) {
+        await storage.addDismissedDashboardItem(type, target, userId);
+      }
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
