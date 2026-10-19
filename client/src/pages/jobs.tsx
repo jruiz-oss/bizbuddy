@@ -1,6 +1,6 @@
 import { SideNav } from "@/components/SideNav";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -397,6 +397,18 @@ export default function ActivityLog({ selectedClientId, setSelectedClientId }: A
     },
     enabled: !!selectedClientId,
   });
+
+  // Deep link from the dashboard: /jobs?open=<activityId> opens that entry's full details
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const openId = params.get("open");
+    if (!openId || activities.length === 0) return;
+    const match = activities.find((a) => a.id === openId);
+    if (match) setOpenDetails(match);
+    params.delete("open");
+    const qs = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, [activities]);
 
   const bulkUndoMutation = useMutation({
     mutationFn: async (jobIds: string[]) => apiRequest("POST", "/api/jobs/bulk-undo", { jobIds }),

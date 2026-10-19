@@ -1696,6 +1696,21 @@ export default function Dashboard({
                     )}
                   </div>
                 )}
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    const id = selectedActivity.id;
+                    setSelectedActivity(null);
+                    navigate(`/jobs?open=${encodeURIComponent(id)}`);
+                  }}
+                  data-testid="button-view-full-activity"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                  View full report
+                </Button>
               </div>
             </div>
           )}
